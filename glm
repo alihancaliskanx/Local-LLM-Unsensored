@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+
+usage() {
+    cat <<EOF
+Usage: glm <command> [llama.cpp options...]
+
+Commands:
+  server    Start llama-server with the Web UI and OpenAI-compatible API
+  cli       Start an interactive terminal chat with llama-cli
+  help      Show this help
+
+Options after the command are passed to llama.cpp unchanged.
+Runtime defaults can be overridden with environment variables, e.g.:
+  NGL=20 CTX=4096 glm server
+EOF
+}
+
+command="${1:-}"
+[[ $# -gt 0 ]] && shift
+
+case "${command}" in
+    server) exec "${SCRIPT_DIR}/run-server.sh" "$@" ;;
+    cli) exec "${SCRIPT_DIR}/run-cli.sh" "$@" ;;
+    help | -h | --help) usage ;;
+    "")
+        usage >&2
+        exit 1
+        ;;
+    *)
+        echo "Error: Unknown command '${command}'" >&2
+        usage >&2
+        exit 1
+        ;;
+esac

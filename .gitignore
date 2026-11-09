@@ -1,2 +1,3 @@
 *.gguf
+*.gguf.part
 *.log
