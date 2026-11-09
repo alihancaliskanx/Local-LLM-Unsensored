@@ -1,6 +1,6 @@
-# GLM Uncensored (Abliterated) Local Inference Setup
+# Local LLM Uncensored (Abliterated) Inference Setup
 
-Local inference configuration and runner scripts for abliterated (uncensored) GLM models using `llama.cpp` with hybrid CPU + GPU execution on Arch Linux / CachyOS.
+Local inference configuration and runner scripts for abliterated (uncensored) models using `llama.cpp` on Arch Linux / CachyOS, tuned for 4 GB VRAM + 16 GB RAM. The default model is `Huihui-Qwen3-4B-Instruct-2507-abliterated` (`Q4_K_M`, ~2.5 GB).
 
 ---
 
@@ -10,11 +10,26 @@ Abliterated models remove the refusal direction from the base model's weight mat
 
 ### Model Selection by Hardware Tier
 
-| Hardware Tier | Target VRAM / RAM | Recommended Model | Popular GGUF Repositories | Recommended Quantization |
+| Hardware Tier | Model | GGUF Repository | Quantization | Status |
 | :--- | :--- | :--- | :--- | :--- |
-| **Low / Mid Hybrid (9B)** | 4–8 GB VRAM + 16 GB RAM | `glm-4-9b-chat-abliterated` | `bartowski/glm-4-9b-chat-abliterated-GGUF`, `mradermacher/glm-4-9b-chat-hf-OBLITERATED-i1-GGUF` | `Q4_K_M` (~5.9 GB) or `IQ3_M` / `Q3_K_M` |
-| **Mid / High (30B–32B)** | 16–24 GB VRAM or 32 GB+ RAM | `GLM-4-32B-0414`, `GLM-4.7-Flash`, `GLM-4.5-Air` | `llmfan46/GLM-4-32B-0414-uncensored-heretic-v2-GGUF`, `huihui-ai/Huihui-GLM-4.7-Flash-abliterated` | `Q4_K_M` (~19.7 GB) |
-| **Server / Multi-GPU MoE** | 100–230 GB+ Unified/VRAM | `GLM-5.1 / 5.2 / 5.3 Abliterated` | `huihui-ai/Huihui-GLM-5.3-Flash-abliterated-GGUF` (321B), `huihui-ai/Huihui-GLM-5.2-abliterated-GGUF` (754B) | Multi-GPU GGUF / FP8 |
+| **4 GB VRAM + 16 GB RAM** | `Huihui-Qwen3-4B-Instruct-2507-abliterated` | `mradermacher/Huihui-Qwen3-4B-Instruct-2507-abliterated-i1-GGUF` | `i1-Q4_K_M` (~2.5 GB) | Default, benchmarked below |
+| **6–8 GB VRAM** | `Huihui-Qwen3-8B-abliterated-v2` | `mradermacher/Huihui-Qwen3-8B-abliterated-v2-GGUF` | `Q4_K_M` (~5.0 GB) | Not tested |
+| **16 GB+ VRAM or 32 GB RAM (MoE)** | `Huihui-Qwen3-30B-A3B-Instruct-2507-abliterated` | `mradermacher/Huihui-Qwen3-30B-A3B-Instruct-2507-abliterated-i1-GGUF` | `i1-Q4_K_M` (~18.6 GB) | Not tested |
+
+Use any other model with `MODEL_PATH=/path/to/model.gguf glm server`.
+
+### Benchmark on 4 GB VRAM
+
+RTX 3050 Ti Laptop (4 GB), 16 GB RAM, 6 cores, default launcher settings, temperature 0.2. Nine Python tasks (two prompted in Turkish), each checked by automated tests, one attempt per task.
+
+| Model | Tasks Passed | Generation Speed | Notes |
+| :--- | :--- | :--- | :--- |
+| `Huihui-Qwen3-4B-Instruct-2507-abliterated` `i1-Q4_K_M` | **8/9** | **~54 tok/s** | Fastest and most accurate |
+| `glm-4-9b-chat-abliterated` `Q4_K_M` | 6/9 | ~8 tok/s | Previous default; split between GPU and CPU |
+| `Huihui-Qwen3.5-9B-abliterated` `Q4_K_M` | 6/9 | ~10 tok/s | Thinking disabled; one task looped inside code comments until the token limit |
+| `Huihui-Qwen3.5-4B-abliterated` `Q4_K_M` | 5/9 | ~46 tok/s | Thinking enabled; often writes `’` instead of `'` in Python code |
+
+Abliteration slightly weakens reasoning; a newer base model does not guarantee a better abliterated model.
 
 ---
 
@@ -24,7 +39,7 @@ When running `Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf` (~2.5 GB
 
 | Criterion | Native (`llama.cpp`) | Docker (`nvidia-container-toolkit`) |
 | :--- | :--- | :--- |
-| **VRAM Overhead** | Minimal; all free VRAM outside the desktop session is available for model layers. | Container runtime and CUDA context overhead consume an extra 150–300 MB VRAM (2–3 fewer GPU layers). |
+| **VRAM Overhead** | Minimal; all free VRAM outside the desktop session is available for model layers. | Container runtime and CUDA context overhead consume an extra 150–300 MB VRAM (2–5 fewer GPU layers). |
 | **CPU Performance** | Offloaded CPU layers execute directly with host AVX2 / AVX-512 instruction sets. | Namespace virtualization introduces minor memory bandwidth overhead. |
 | **Footprint** | Single binary (`llama-server` or `llama-cli`), no background daemon required. | Requires `nvidia-container-toolkit` and 5–8 GB CUDA container images. |
 
@@ -127,7 +142,7 @@ llama-server -hf mradermacher/Huihui-Qwen3-4B-Instruct-2507-abliterated-i1-GGUF 
 ### D. Docker Execution (Optional)
 
 ```bash
-docker run --gpus all --rm -it -p 8080:8080 -v "$(pwd):/models" ghcr.io/ggml-org/llama.cpp:server-cuda -m /models/Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf -ngl 20 -c 8192 -fa on -ctk q8_0 -ctv q8_0 --host 0.0.0.0 --port 8080
+docker run --gpus all --rm -it -p 8080:8080 -v "$(pwd):/models" ghcr.io/ggml-org/llama.cpp:server-cuda -m /models/Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf -ngl 28 -c 8192 -fa on -ctk q8_0 -ctv q8_0 --host 0.0.0.0 --port 8080
 ```
 
 ---
@@ -141,5 +156,5 @@ docker run --gpus all --rm -it -p 8080:8080 -v "$(pwd):/models" ghcr.io/ggml-org
 | `-c` | `8192` | Context window size in tokens. |
 | `-np` | `1` | Allocates a single parallel slot on `llama-server` to prevent 4x KV cache allocation. |
 | `-fa on` | `on` | Enables Flash Attention (`llama.cpp` >= 0.6 requires explicit `on`, `off`, or `auto`). |
-| `-ctk q8_0 -ctv q8_0` | `q8_0` | Quantizes K and V caches to 8-bit, saving ~500 MB of VRAM on 8192 context. |
+| `-ctk q8_0 -ctv q8_0` | `q8_0` | Quantizes K and V caches to 8-bit, halving the KV cache from ~1.2 GB to ~600 MB on 8192 context. |
 | `-t` | `6` | Number of CPU threads allocated for non-offloaded layers (tuned for 6 physical cores). |
