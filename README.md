@@ -20,7 +20,7 @@ Abliterated models remove the refusal direction from the base model's weight mat
 
 ## 2. Native `llama.cpp` vs. Docker on 4 GB VRAM Systems
 
-When running `glm-4-9b-chat-abliterated-Q4_K_M.gguf` (~5.9 GB) on a system with 4 GB VRAM and 16 GB RAM, layers are split across the GPU and system RAM. Native execution is strongly preferred over Docker in constrained VRAM environments:
+When running `Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf` (~2.5 GB) on a system with 4 GB VRAM and 16 GB RAM, the model only just fits: with the default 8192 context and 512 MiB margin, about 32 of its 37 layers go to the GPU and the rest run from system RAM. Native execution is strongly preferred over Docker in constrained VRAM environments:
 
 | Criterion | Native (`llama.cpp`) | Docker (`nvidia-container-toolkit`) |
 | :--- | :--- | :--- |
@@ -54,7 +54,7 @@ When running `glm-4-9b-chat-abliterated-Q4_K_M.gguf` (~5.9 GB) on a system with 
 `setup.sh` performs every step below and skips the ones already done, so it is safe to run again:
 
 1. Installs `llama-cpp` with `ggml-cuda` (if `nvidia-smi` is present) or `ggml-vulkan` via `pacman`. Set `BACKEND=cuda` or `BACKEND=vulkan` to choose explicitly.
-2. Downloads `glm-4-9b-chat-abliterated-Q4_K_M.gguf` from `bartowski/glm-4-9b-chat-abliterated-GGUF` into the project root (or `MODEL_PATH`). An interrupted download resumes on the next run.
+2. Downloads `Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf` from `mradermacher/Huihui-Qwen3-4B-Instruct-2507-abliterated-i1-GGUF` into the project root (or `MODEL_PATH`). An interrupted download resumes on the next run.
 3. Links the `glm` command into `~/.local/bin` (or `BIN_DIR`). An existing `glm` that points elsewhere is never overwritten.
 
 Remove the `glm` link again with `./setup.sh --uninstall`; installed packages and the model are kept.
@@ -77,7 +77,7 @@ sudo pacman -S --needed llama-cpp ggml-vulkan
 
 ### Model Placement
 
-Place `glm-4-9b-chat-abliterated-Q4_K_M.gguf` in the project root directory, or specify a custom location via the `MODEL_PATH` environment variable.
+Place `Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf` in the project root directory, or specify a custom location via the `MODEL_PATH` environment variable.
 
 ---
 
@@ -115,19 +115,19 @@ Only one `llama-server` or `llama-cli` instance can hold the GPU at a time. If a
 Interactive terminal session:
 
 ```bash
-llama-cli -hf bartowski/glm-4-9b-chat-abliterated-GGUF:Q4_K_M -ngl auto -fit on -fitt 512 -c 8192 -fa on -ctk q8_0 -ctv q8_0 -t 6
+llama-cli -hf mradermacher/Huihui-Qwen3-4B-Instruct-2507-abliterated-i1-GGUF -hff Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf -ngl auto -fit on -fitt 512 -c 8192 -fa on -ctk q8_0 -ctv q8_0 -t 6
 ```
 
 Local API server:
 
 ```bash
-llama-server -hf bartowski/glm-4-9b-chat-abliterated-GGUF:Q4_K_M -ngl auto -fit on -fitt 512 -c 8192 -np 1 -fa on -ctk q8_0 -ctv q8_0 -t 6 --port 8080
+llama-server -hf mradermacher/Huihui-Qwen3-4B-Instruct-2507-abliterated-i1-GGUF -hff Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf -ngl auto -fit on -fitt 512 -c 8192 -np 1 -fa on -ctk q8_0 -ctv q8_0 -t 6 --port 8080
 ```
 
 ### D. Docker Execution (Optional)
 
 ```bash
-docker run --gpus all --rm -it -p 8080:8080 -v "$(pwd):/models" ghcr.io/ggml-org/llama.cpp:server-cuda -m /models/glm-4-9b-chat-abliterated-Q4_K_M.gguf -ngl 20 -c 8192 -fa on -ctk q8_0 -ctv q8_0 --host 0.0.0.0 --port 8080
+docker run --gpus all --rm -it -p 8080:8080 -v "$(pwd):/models" ghcr.io/ggml-org/llama.cpp:server-cuda -m /models/Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf -ngl 20 -c 8192 -fa on -ctk q8_0 -ctv q8_0 --host 0.0.0.0 --port 8080
 ```
 
 ---
@@ -136,7 +136,7 @@ docker run --gpus all --rm -it -p 8080:8080 -v "$(pwd):/models" ghcr.io/ggml-org
 
 | Parameter | Default | Description |
 | :--- | :--- | :--- |
-| `-ngl` | `auto` | Automatically offloads the maximum number of layers that fit into free VRAM (40 total layers in GLM-4-9B). |
+| `-ngl` | `auto` | Automatically offloads the maximum number of layers that fit into free VRAM (37 offloadable layers in Qwen3-4B). |
 | `-fit on -fitt 512` | `512` MiB | Reserves a 512 MiB VRAM safety margin to avoid `cudaMalloc` out-of-memory errors. |
 | `-c` | `8192` | Context window size in tokens. |
 | `-np` | `1` | Allocates a single parallel slot on `llama-server` to prevent 4x KV cache allocation. |

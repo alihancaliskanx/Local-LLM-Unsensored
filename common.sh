@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 
-MODEL_FILE="glm-4-9b-chat-abliterated-Q4_K_M.gguf"
+MODEL_FILE="Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf"
 MODEL_PATH="${MODEL_PATH:-${SCRIPT_DIR}/${MODEL_FILE}}"
 GPU_LAYERS="${NGL:-auto}"
 FIT_MARGIN="${FIT_TARGET:-512}"

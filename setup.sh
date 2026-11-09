@@ -5,7 +5,7 @@ SCRIPT_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
 # shellcheck source=common.sh
 source "${SCRIPT_DIR}/common.sh"
 
-MODEL_REPO="bartowski/glm-4-9b-chat-abliterated-GGUF"
+MODEL_REPO="mradermacher/Huihui-Qwen3-4B-Instruct-2507-abliterated-i1-GGUF"
 BIN_DIR="${BIN_DIR:-${HOME}/.local/bin}"
 TARGET="${SCRIPT_DIR}/glm"
 LINK="${BIN_DIR}/glm"
@@ -76,7 +76,7 @@ download_model() {
     require_binary curl
     local url="https://huggingface.co/${MODEL_REPO}/resolve/main/${MODEL_FILE}"
 
-    echo "Model: downloading ${MODEL_FILE} (~6 GB) to ${MODEL_PATH}"
+    echo "Model: downloading ${MODEL_FILE} (~2.5 GB) to ${MODEL_PATH}"
     mkdir -p "$(dirname "${MODEL_PATH}")"
     if ! curl -fL -C - -o "${MODEL_PATH}.part" "${url}"; then
         echo "Error: Download failed; run setup.sh again to resume it." >&2
