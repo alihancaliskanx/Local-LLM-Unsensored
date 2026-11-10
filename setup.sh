@@ -100,6 +100,10 @@ clean_legacy_link() {
             echo "Command: removed legacy link ${LEGACY_LINK}"
         fi
     fi
+    if [[ -L "${LINK}" && ! -e "${LINK}" ]]; then
+        rm "${LINK}"
+        echo "Command: removed dangling link ${LINK}"
+    fi
 }
 
 link_command() {
