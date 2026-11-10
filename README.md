@@ -16,7 +16,7 @@ Abliterated models remove the refusal direction from the base model's weight mat
 | **6–8 GB VRAM** | `Huihui-Qwen3-8B-abliterated-v2` | `mradermacher/Huihui-Qwen3-8B-abliterated-v2-GGUF` | `Q4_K_M` (~5.0 GB) | Not tested |
 | **16 GB+ VRAM or 32 GB RAM (MoE)** | `Huihui-Qwen3-30B-A3B-Instruct-2507-abliterated` | `mradermacher/Huihui-Qwen3-30B-A3B-Instruct-2507-abliterated-i1-GGUF` | `i1-Q4_K_M` (~18.6 GB) | Not tested |
 
-Use any other model with `MODEL_PATH=/path/to/model.gguf glm server`.
+Use any other model with `MODEL_PATH=/path/to/model.gguf qwen-local server`.
 
 ### Benchmark on 4 GB VRAM
 
@@ -49,8 +49,8 @@ When running `Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf` (~2.5 GB
 
 | File | Description |
 | :--- | :--- |
-| `setup.sh` | One-time setup: installs `llama.cpp`, downloads the model, and links the `glm` command into `~/.local/bin` |
-| `glm` | Command entry point: `glm server` and `glm cli` |
+| `setup.sh` | One-time setup: installs `llama.cpp`, downloads the model, and links the `qwen-local` command into `~/.local/bin` |
+| `qwen-local` | Command entry point: `qwen-local server` and `qwen-local cli` |
 | `run-server.sh` | Launches `llama-server` with Web UI and OpenAI-compatible API (`127.0.0.1:8080`) |
 | `run-cli.sh` | Launches interactive terminal chat via `llama-cli` (loads `rules.md` via `-sysf` if present) |
 | `common.sh` | Shared runtime defaults and startup checks sourced by both launchers |
@@ -70,9 +70,9 @@ When running `Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf` (~2.5 GB
 
 1. Installs `llama-cpp` with `ggml-cuda` (if `nvidia-smi` is present) or `ggml-vulkan` via `pacman`. Set `BACKEND=cuda` or `BACKEND=vulkan` to choose explicitly.
 2. Downloads `Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf` from `mradermacher/Huihui-Qwen3-4B-Instruct-2507-abliterated-i1-GGUF` into the project root (or `MODEL_PATH`). An interrupted download resumes on the next run.
-3. Links the `glm` command into `~/.local/bin` (or `BIN_DIR`). An existing `glm` that points elsewhere is never overwritten.
+3. Links the `qwen-local` command into `~/.local/bin` (or `BIN_DIR`). An existing `qwen-local` that points elsewhere is never overwritten.
 
-Remove the `glm` link again with `./setup.sh --uninstall`; installed packages and the model are kept.
+Remove the `qwen-local` link again with `./setup.sh --uninstall`; installed packages and the model are kept.
 
 The manual steps are listed below for reference.
 
@@ -98,12 +98,12 @@ Place `Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf` in the project 
 
 ## 5. Usage
 
-After `setup.sh`, `glm` works from any directory. Without it, `./run-server.sh` and `./run-cli.sh` take the same arguments and environment variables. Options after the command are passed to `llama.cpp` unchanged.
+After `setup.sh`, `qwen-local` works from any directory. Without it, `./run-server.sh` and `./run-cli.sh` take the same arguments and environment variables. Options after the command are passed to `llama.cpp` unchanged.
 
 ### A. Local Web UI and OpenAI API Server
 
 ```bash
-glm server
+qwen-local server
 ```
 
 - **Web UI:** `http://127.0.0.1:8080`
@@ -112,18 +112,18 @@ glm server
 Override runtime parameters with environment variables when needed:
 
 ```bash
-NGL=20 CTX=4096 PORT=8080 glm server
+NGL=20 CTX=4096 PORT=8080 qwen-local server
 ```
 
 ### B. Interactive Terminal Chat
 
 ```bash
-glm cli
+qwen-local cli
 ```
 
-If a custom `rules.md` file exists in the repository root (or is pointed to via `RULES_PATH`), `glm cli` automatically injects it as the system prompt using `-sysf`.
+If a custom `rules.md` file exists in the repository root (or is pointed to via `RULES_PATH`), `qwen-local cli` automatically injects it as the system prompt using `-sysf`.
 
-Only one `llama-server` or `llama-cli` instance can hold the GPU at a time. If another one is running, `glm` waits up to 5 seconds for it to exit and then stops with the PIDs to terminate.
+Only one `llama-server` or `llama-cli` instance can hold the GPU at a time. If another one is running, `qwen-local` waits up to 5 seconds for it to exit and then stops with the PIDs to terminate.
 
 ### C. Direct Hugging Face Execution (Without Pre-downloading)
 

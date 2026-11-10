@@ -5,7 +5,7 @@ SCRIPT_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
 
 usage() {
     cat <<EOF
-Usage: glm <command> [llama.cpp options...]
+Usage: qwen-local <command> [llama.cpp options...]
 
 Commands:
   server    Start llama-server with the Web UI and OpenAI-compatible API
@@ -14,7 +14,7 @@ Commands:
 
 Options after the command are passed to llama.cpp unchanged.
 Runtime defaults can be overridden with environment variables, e.g.:
-  NGL=20 CTX=4096 glm server
+  NGL=20 CTX=4096 qwen-local server
 EOF
 }
 
