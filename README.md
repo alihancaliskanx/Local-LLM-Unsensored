@@ -51,6 +51,9 @@ When running `Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf` (~2.5 GB
 | :--- | :--- |
 | `setup.sh` | One-time setup: installs `llama.cpp`, downloads the model, and links the `qwen-local` command into `~/.local/bin` |
 | `qwen-local` | Command entry point: `qwen-local server` and `qwen-local cli` |
+| `qwen.zsh` | Shell helper functions (`qwcli`, `qwfile`, `qwpipe`, `qwsearch`, `qwserver`, `qstop`) with context multipliers and reasoning controls |
+| `qwsearch.py` | Privacy-preserving, Tor-only web search synthesis engine with strict Fail-Closed OPSEC |
+| `rules.md` | System prompt rules configuring the model for direct developer assistant responses |
 | `run-server.sh` | Launches `llama-server` with Web UI and OpenAI-compatible API (`127.0.0.1:8080`) |
 | `run-cli.sh` | Launches interactive terminal chat via `llama-cli` (loads `rules.md` via `-sysf` if present) |
 | `common.sh` | Shared runtime defaults and startup checks sourced by both launchers |
@@ -125,7 +128,53 @@ If a custom `rules.md` file exists in the repository root (or is pointed to via 
 
 Only one `llama-server` or `llama-cli` instance can hold the GPU at a time. If another one is running, `qwen-local` waits up to 5 seconds for it to exit and then stops with the PIDs to terminate.
 
-### C. Direct Hugging Face Execution (Without Pre-downloading)
+### C. Shell Functions (`qwen.zsh`)
+
+Load the helper functions into your shell profile (`~/.zshrc`):
+
+```bash
+[[ -f "$HOME/Local-LLM-Unsensored/qwen.zsh" ]] && source "$HOME/Local-LLM-Unsensored/qwen.zsh"
+```
+
+The shell integration provides commands with automatic context scaling, reasoning effort control, and output filtering:
+
+| Command | Description | Example |
+| :--- | :--- | :--- |
+| `qwcli` (`qwc`) | Terminal chat or single-turn query (`-s`) | `qwcli -c 16 -r 2 -s -p "Explain recursion"` |
+| `qws` | Short alias for single-turn query (`qwcli -s -p`) | `qws "What is Rayleigh scattering?"` |
+| `qwsearch` (`qwsr`) | Tor-isolated web search with local Qwen synthesis | `qwsearch "Arch Linux latest changes"` |
+| `qwfile` | Document & code analyzer (supports `.pdf`, `.txt`, code) | `qwfile -c 32 -r 3 qwen-local "Analyze this script"` |
+| `qwpipe` | Pipe processor for shell stdout/stderr | `cat build.log \| qwpipe -c 16 "Find root cause"` |
+| `qwserver` (`qw`) | Launches server with context, port, and reasoning | `qwserver -c 16 -p 8080 -r 2` |
+| `qstop` | Terminates running `llama-server` and `llama-cli` processes | `qstop` |
+
+#### Common Flags
+
+- `-c <num>`: Context tokens. Multipliers <= 256 are multiplied by 1024 (e.g., `-c 16` -> 16,384 tokens, `-c 32` -> 32,768 tokens; model ceiling: 32,768). Default: `16`.
+- `-r <0..4>`: Reasoning effort (0: `off`, 1: `low`, 2: `medium` [default], 3: `high`, 4: `max`).
+- `-R`, `--no-rules`: Disables `rules.md` (raw model behavior). Default for single-turn queries.
+- `--rules`: Forces developer rules on single-turn queries. Default for interactive terminal chat.
+- `-f <format>`: (`qwfile` only) Force parser format: `pdf`, `txt`, or `code`. Automatic by default (requires `poppler`'s `pdftotext` for PDF).
+- `-h`, `--help`: Displays command usage.
+
+#### Tor-Isolated Web Search (`qwsearch`)
+
+`qwsearch` allows local models to answer queries using real-time internet data while maintaining an absolute OPSEC guarantee: **no packets or DNS queries ever leave the machine outside the Tor network**.
+
+- **Fail-Closed Gatekeeper:** Probes `127.0.0.1:9050` before every request. If Tor is stopped or unreachable, the process aborts immediately (exit code 2) without attempting cleartext connections.
+- **Remote DNS Resolution:** Uses `socks5h://` so domain names are resolved exclusively by the Tor exit node, preventing local ISP DNS leakage.
+- **Resilient Engine Cascade:** Tries DuckDuckGo HTML first; if blocked by anti-bot rate limits on the Tor circuit, automatically falls back to Bing over Tor SOCKS5h, enriched with Wikipedia context.
+- **Useful Flags:**
+  - `qwsearch "query"`: Standard search and synthesis.
+  - `qwsearch --raw "query"`: Outputs Markdown search context without running the LLM (ideal for piping into `qwpipe`).
+  - `qwsearch --json "query"`: Outputs raw search results as JSON.
+  - `qwsearch --leak-test`: Audits the Tor connection via `check.torproject.org` and prints the active exit node IP.
+  - `qwsearch --new-circuit "query"`: Requests a fresh Tor identity (SIGNAL NEWNYM) before querying.
+
+> [!NOTE]
+> The built-in `llama-server` Web UI (`http://127.0.0.1:8080`) is a static offline C++ interface without tool-calling hooks. Real-time Tor web search is driven through `qwsearch` in the CLI.
+
+### D. Direct Hugging Face Execution (Without Pre-downloading)
 
 Interactive terminal session:
 
@@ -139,7 +188,7 @@ Local API server:
 llama-server -hf mradermacher/Huihui-Qwen3-4B-Instruct-2507-abliterated-i1-GGUF -hff Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf -ngl auto -fit on -fitt 512 -c 8192 -np 1 -fa on -ctk q8_0 -ctv q8_0 -t 6 --port 8080
 ```
 
-### D. Docker Execution (Optional)
+### E. Docker Execution (Optional)
 
 ```bash
 docker run --gpus all --rm -it -p 8080:8080 -v "$(pwd):/models" ghcr.io/ggml-org/llama.cpp:server-cuda -m /models/Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf -ngl 28 -c 8192 -fa on -ctk q8_0 -ctv q8_0 --host 0.0.0.0 --port 8080
