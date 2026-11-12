@@ -44,8 +44,8 @@ SECRET_PATTERNS = [
 for pat in SECRET_PATTERNS:
     if re.search(pat, staged_diff):
         print("════════════════════════════════════════════════════════════════", file=sys.stderr)
-        print(" 🚨 GÜVENLİK ENGELİ: Staged diff içinde hassas anahtar/parola tespit edildi!", file=sys.stderr)
-        print(" Commit durduruldu. Sırları temizleyin veya bypass için: git commit --no-verify", file=sys.stderr)
+        print(" 🚨 SECURITY BLOCK: Sensitive private key or password detected in staged diff!", file=sys.stderr)
+        print(" Commit aborted. Purge secrets or bypass with: git commit --no-verify", file=sys.stderr)
         print("════════════════════════════════════════════════════════════════", file=sys.stderr)
         sys.exit(1)
 
@@ -53,18 +53,18 @@ for pat in SECRET_PATTERNS:
 # For large multi-file refactors (> 4000 chars), regex secret scan covers the full diff;
 # sending a tiny 3500-char truncated slice would cause the model to hallucinate missing code.
 if len(staged_diff) > 4000:
-    print(f"✅ Qwen Güvenlik Denetimi: Yapısal diff ({len(staged_diff)} bayt), tam kapsamlı regex sır taraması onaylandı.", file=sys.stderr)
+    print(f"✅ Qwen Security Audit: Structural diff ({len(staged_diff)} bytes), regex secret scan passed.", file=sys.stderr)
     sys.exit(0)
 
 prompt = (
     "You are a strict security gatekeeper. Inspect the following staged git diff for critical security "
     "vulnerabilities (CWE/OWASP, SQLi, RCE, buffer overflow, hardcoded secrets, logic bypass).\n"
-    "If ANY critical or high vulnerability is found, explain it in 1-2 Turkish sentences and end with [VULNERABILITY_FOUND].\n"
+    "If ANY critical or high vulnerability is found, explain it in 1-2 concise sentences and end with [VULNERABILITY_FOUND].\n"
     "If the diff is secure, write [SECURITY_OK].\n\n"
     f"Git Diff:\n```diff\n{staged_diff}\n```"
 )
 
-print("🛡️  Qwen Güvenlik Denetimi: Staged değişiklikler taranıyor...", file=sys.stderr)
+print("🛡️  Qwen Security Audit: Scanning staged changes...", file=sys.stderr)
 output = ""
 llm_checked = False
 
@@ -128,15 +128,15 @@ if not llm_checked:
 
 if "[VULNERABILITY_FOUND]" in output:
     print("════════════════════════════════════════════════════════════════", file=sys.stderr)
-    print(" 🚨 GÜVENLİK ENGELİ: Staged kodda kritik güvenlik açığı tespit edildi!", file=sys.stderr)
+    print(" 🚨 SECURITY BLOCK: Critical vulnerability detected in staged code!", file=sys.stderr)
     print(output.replace("[VULNERABILITY_FOUND]", "").strip(), file=sys.stderr)
-    print(" Commit durduruldu. Düzeltin veya bypass için: git commit --no-verify", file=sys.stderr)
+    print(" Commit aborted. Fix the issue or bypass with: git commit --no-verify", file=sys.stderr)
     print("════════════════════════════════════════════════════════════════", file=sys.stderr)
     sys.exit(1)
 
 if llm_checked:
-    print("✅ Qwen Güvenlik Denetimi: Kod temiz, commit onaylandı.", file=sys.stderr)
+    print("✅ Qwen Security Audit: Code clean, commit approved.", file=sys.stderr)
 else:
-    print("⚠️  Qwen Güvenlik Denetimi: LLM meşgul/kapalı, regex gizli anahtar taraması geçti.", file=sys.stderr)
+    print("⚠️  Qwen Security Audit: LLM offline/busy, regex secret scan passed.", file=sys.stderr)
 
 sys.exit(0)

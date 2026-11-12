@@ -131,8 +131,7 @@ def is_result_relevant(query: str, title: str, snippet: str) -> bool:
     query_words = set(re.findall(r'\b[a-zA-Z0-9_-]{3,}\b', query.lower()))
     stopwords = {
         'the', 'and', 'for', 'with', 'what', 'how', 'official', 'latest', 'current',
-        'recent', 'anda', 'resmi', 'güncel', 'olan', 'paket', 'package', 'packages',
-        'nedir', 'nelerdir', 'hakkinda'
+        'recent', 'package', 'packages', 'guide', 'tutorial', 'overview'
     }
     core_keywords = {w for w in query_words if w not in stopwords}
     if not core_keywords:

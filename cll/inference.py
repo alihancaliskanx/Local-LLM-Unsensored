@@ -478,11 +478,11 @@ def main():
             "For each finding, explain the exploit mechanism, severity level, and provide safe refactored code."
         )
         user_prompt = (
-            f"Lütfen aşağıdaki kodu güvenlik açıkları açısından ayrıntılı incele.\n\n"
-            f"Hedef: {label}\n```\n{code_content}\n```\n"
+            f"Please perform a detailed security audit on the following code.\n\n"
+            f"Target: {label}\n```\n{code_content}\n```\n"
         )
         if prompt_text:
-            user_prompt += f"\nEk Talimat: {prompt_text}\n"
+            user_prompt += f"\nAdditional Instructions: {prompt_text}\n"
 
         code = execute_inference(user_prompt, system_prompt=system_prompt, ctx=ctx, reasoning_level=reasoning_level, rules_path=rules_file)
         sys.exit(code)

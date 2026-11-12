@@ -68,13 +68,12 @@ SEARCH_MODE = "auto"   # "auto" | "always" | "deep" | "off"
 DEEP_READ = True
 
 AUTO_SEARCH_TRIGGERS = [
-    r"\b(son|en son|güncel|yeni|haber|ne zaman|kaç|fiyat|sürüm|versiyon|durum|kimdir)\b",
     r"\b(latest|recent|news|current|today|release|status|price|who is)\b",
     r"\b(202[4-9]|203[0-9])\b",
     r"https?://",
-    r"(\.onion\b|\bonion\b|gizli\s+servis|hidden\s+service|dark\s*web)",
-    r"\b(nedir|nelerdir|nasıl)\b.*\b(değişiklik|yenilik|güncelleme|çalışır|yapılır)\b",
-    r"\b(bilmediğim|bilmiyorum|araştır|öğren|keşfet|anlat|açıkla)\b"
+    r"(\.onion\b|\bonion\b|hidden\s+service|dark\s*web)",
+    r"\b(what is|what are|how to|how does)\b.*\b(change|update|feature|work)\b",
+    r"\b(research|discover|explore|investigate|explain|analyze)\b"
 ]
 
 
@@ -428,7 +427,7 @@ async def completion_stream(payload: dict, search_summary_md: Optional[str] = No
             err_chunk = {
                 "choices": [{
                     "index": 0,
-                    "delta": {"content": f"\n\n**Hata:** LLM bağlantı hatası: {str(item)}"},
+                    "delta": {"content": f"\n\n**Error:** LLM connection error: {str(item)}"},
                     "finish_reason": "error"
                 }]
             }
@@ -445,7 +444,7 @@ async def completion_stream(payload: dict, search_summary_md: Optional[str] = No
 async def chat_completions_handler(request: Request):
     if not is_llama_running():
         async def offline_stream():
-            msg = "⚠️ **Yerel LLM Kapalı.**\n\nLütfen üst paneldeki **'LLM Kapalı (Aç)'** butonuna basarak modeli başlatın."
+            msg = "⚠️ **Local LLM Offline.**\n\nPlease click **'LLM Offline (Start)'** on the top control bar to launch the model."
             chunk = {"choices": [{"index": 0, "delta": {"content": msg}, "finish_reason": "stop"}]}
             yield f"data: {json.dumps(chunk)}\n\n"
             yield "data: [DONE]\n\n"
@@ -480,7 +479,7 @@ async def chat_completions_handler(request: Request):
     if do_search and last_user_msg:
         if not qwsearch.check_tor_port():
             async def opsec_err():
-                err_msg = "🛑 **[OPSEC FAIL-CLOSED]** Tor SOCKS5h (`127.0.0.1:9050`) kapalı. Arama ve bağlantı engellendi."
+                err_msg = "🛑 **[OPSEC FAIL-CLOSED]** Tor SOCKS5h (`127.0.0.1:9050`) is offline. Web search and outbound connections blocked."
                 c = {"choices": [{"index": 0, "delta": {"content": err_msg}, "finish_reason": "stop"}]}
                 yield f"data: {json.dumps(c)}\n\n"
                 yield "data: [DONE]\n\n"
@@ -509,9 +508,9 @@ async def chat_completions_handler(request: Request):
                 engine_name = "Tor Direct Scrape"
 
         # 2. Agentic Multi-Query or Standard Search Cascade
-        wants_onion = bool(re.search(r'(\.onion|\bonion\b|gizli\s+servis|hidden\s+service|dark\s*web)', last_user_msg, re.IGNORECASE))
+        wants_onion = bool(re.search(r'(\.onion|\bonion\b|hidden\s+service|dark\s*web)', last_user_msg, re.IGNORECASE))
         is_exploratory = (SEARCH_MODE == "deep") or bool(re.search(
-            r'\b(bilmediğim|bilmiyorum|araştır|öğren|keşfet|hakkında bilgi|ne amaçla|nasıl çalışır|nedir|hangileridir|sürümleri|versiyon)\b',
+            r'\b(research|discover|explore|investigate|explain|what is|how does|features|versions?)\b',
             last_user_msg,
             re.IGNORECASE
         ))
@@ -520,7 +519,7 @@ async def chat_completions_handler(request: Request):
             generated_queries = await loop.run_in_executor(None, formulate_research_queries, last_user_msg)
 
         if not deep_pages and generated_queries:
-            engine_name = f"Ajanik Keşif ({len(generated_queries)} sorgu)"
+            engine_name = f"Agentic Research ({len(generated_queries)} queries)"
             existing_urls = {s["url"] for s in sources}
             for q in generated_queries:
                 q_onion = wants_onion or bool(re.search(r'(\.onion|\bonion\b|hidden\s+service)', q, re.IGNORECASE))
@@ -541,10 +540,10 @@ async def chat_completions_handler(request: Request):
             for ro in raw_onions:
                 clean_query = clean_query.replace(ro, "")
             clean_query = re.sub(
-                r'\b(sayfasında|siteden|sitesinden|sitelerinde|sitelerinden|olan|bir|bakmasını|isteyelim|bakarak|bak|bul|ara|uzantılı|konusu|konusunu|için|ve|veya|oradaki|hakkında|ilgili|adımlar|nasıl|sıralanmış|nelerdir|nedir|lütfen|göster|anlat|özetle|açıkla|söyle|kısaca|detaylı|türkçe|hangi|dizinlerin|listelendiğini|güvenlik|özelliklerini|proje|yönetimi|ne|yazdığını|yazıyor|in the page|how to|what is|tell me)\b',
+                r'\b(in the page|from site|on website|looking for|search for|about|steps|how to|what is|tell me|explain|summarize|briefly|details|which|list|security|features|project|management)\b',
                 '', clean_query, flags=re.IGNORECASE
             )
-            clean_query = re.sub(r'(\.onion|\bonion\b|gizli\s+servis\w*|hidden\s+service\w*|dark\s*web\w*)', '', clean_query, flags=re.IGNORECASE)
+            clean_query = re.sub(r'(\.onion|\bonion\b|hidden\s+service\w*|dark\s*web\w*)', '', clean_query, flags=re.IGNORECASE)
             clean_query = re.sub(r'[?!.,;:]+', ' ', clean_query)
             clean_query = re.sub(r'\s+', ' ', clean_query).strip()
 
@@ -565,7 +564,7 @@ async def chat_completions_handler(request: Request):
                 engine_name = engine_used
 
         # Technical specification enrichment for cryptography / protocol queries
-        tech_keywords = re.findall(r'\b(ed25519|curve25519|rsa|aes|kripto\w*|crypto\w*|şifreleme|protokol\w*|rendezvous|handshake|hidden\s*service\w*|onion\s*v3|private\s*key)\b', last_user_msg, re.IGNORECASE)
+        tech_keywords = re.findall(r'\b(ed25519|curve25519|rsa|aes|crypt\w*|protocol\w*|rendezvous|handshake|hidden\s*service\w*|onion\s*v3|private\s*key)\b', last_user_msg, re.IGNORECASE)
         if tech_keywords and not explicit_urls:
             target_term = "Tor (network)" if any("onion" in k.lower() or "hidden" in k.lower() for k in tech_keywords) else tech_keywords[0]
             if "ed25519" in [k.lower() for k in tech_keywords]:
@@ -599,17 +598,17 @@ async def chat_completions_handler(request: Request):
                 badge_items.append(f"{idx}. [{s.get('title')}]({s.get('url')})")
             sources_list_md = "\n".join(badge_items)
 
-            deep_tag = " + 📖 Derin Okuma" if deep_pages else ""
-            alert_md = "\n> 🛡️ **Güvenlik Bildirimi:** Şüpheli prompt injection tespit edildi ve etkisiz hale getirildi.\n" if injection_detected else ""
+            deep_tag = " + 📖 Deep Read" if deep_pages else ""
+            alert_md = "\n> 🛡️ **Security Notice:** Suspicious prompt injection payload detected and sanitized.\n" if injection_detected else ""
 
             queries_md = ""
             if generated_queries:
-                queries_md = "**🔍 Ajan Tarafından Türetilen Araştırma Sorguları:**\n" + "\n".join(f"- `{q}`" for q in generated_queries) + "\n\n"
+                queries_md = "**🔍 Agent-Generated Search Queries:**\n" + "\n".join(f"- `{q}`" for q in generated_queries) + "\n\n"
 
             search_summary_md = (
-                f"### 🌐 Tor Kaynakları ({engine_name} - {len(sources)} sonuç{deep_tag})\n\n"
+                f"### 🌐 Tor Sources ({engine_name} - {len(sources)} results{deep_tag})\n\n"
                 f"{queries_md}"
-                f"**📚 İncelenen Kaynaklar:**\n"
+                f"**📚 Cited Sources:**\n"
                 f"{sources_list_md}\n"
                 f"{alert_md}"
                 f"\n---\n"

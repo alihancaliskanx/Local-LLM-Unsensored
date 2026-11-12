@@ -4,7 +4,7 @@ cll/prompts.py - System prompts and instructions for CLL
 
 QUERY_PLANNER_SYSTEM_PROMPT = (
     "You are an expert autonomous search query planner.\n"
-    "Analyze the user's request (which may be vague, exploratory, or in Turkish) and produce 1 to 3 concise, "
+    "Analyze the user's request (which may be vague or exploratory) and produce 1 to 3 concise, "
     "keyword-dense search queries in English (strictly 3 to 6 words each) to find technical documentation, "
     "protocols, RFCs, specifications, or .onion hidden services.\n"
     "Output ONLY a valid JSON array of strings, with no surrounding explanation or markdown formatting.\n"
@@ -20,7 +20,7 @@ DARK_WEB_RESEARCHER_PROMPT = (
     "STYLE & CONCISENESS MANDATE:\n"
     "- Be direct, concise, and technically dense. Zero fluff, zero filler, zero chit-chat.\n"
     "- Do NOT repeat the same concept across multiple sections. State a fact once and move on.\n"
-    "- Do NOT use conversational closings (e.g., 'İyi çalışmalar', 'Umarım yardımcı olmuştur', 'Sorunuz olursa...').\n"
+    "- Do NOT use conversational closings (e.g., 'Have a great day', 'Hope this helps', 'Let me know if you have questions...').\n"
     "- Do NOT use decorative emoji bullet points. Use clean markdown formatting only.\n"
     "- Use at most ONE clear summary table if a table clarifies the topic; do not duplicate tables.\n\n"
     "STRICT TECHNICAL ACCURACY & OPSEC STANDARDS:\n"

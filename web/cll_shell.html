@@ -182,42 +182,42 @@
     <div class="cll-group">
       <div class="cll-brand">⚡ CLL</div>
 
-      <button id="llm-toggle-btn" class="cll-power-btn off" onclick="toggleLLM()" title="Yerel LLM Sunucusunu Aç / Kapat">
+      <button id="llm-toggle-btn" class="cll-power-btn off" onclick="toggleLLM()" title="Toggle Local LLM Server">
         <span id="llm-dot">🔴</span>
-        <span id="llm-btn-text">LLM Kapalı (Aç)</span>
+        <span id="llm-btn-text">LLM Offline (Start)</span>
       </button>
 
-      <label class="cll-label" title="Model Context / Token Sınırı">
-        Token Sınırı:
+      <label class="cll-label" title="Model Context / Token Limit">
+        Token Limit:
         <select id="ctx-select" class="cll-select" onchange="onEngineParamChange()">
           <option value="4096">4K (4096)</option>
           <option value="8192">8K (8192)</option>
           <option value="16384">16K (16384)</option>
           <option value="24576">24K (24576)</option>
-          <option value="32768" selected>32K (32768 - Varsayılan)</option>
-          <option value="49152">48K (49152 - Tavan)</option>
+          <option value="32768" selected>32K (32768 - Default)</option>
+          <option value="49152">48K (49152 - Ceiling)</option>
         </select>
       </label>
     </div>
 
     <div class="cll-group">
-      <label class="cll-label" title="Tor Web & .onion Arama Modu">
+      <label class="cll-label" title="Tor Web & .onion Search Mode">
         <select id="search-mode-select" class="cll-select" onchange="syncSearchSettings()">
-          <option value="auto">🔍 Tor Arama: Otonom</option>
-          <option value="deep" selected>🧠 Tor Arama: Derin Keşif (Ajan)</option>
-          <option value="always">🌐 Tor Arama: Her Zaman</option>
-          <option value="off">🔒 Tor Arama: Kapalı</option>
+          <option value="auto">🔍 Tor Search: Autonomous</option>
+          <option value="deep" selected>🧠 Tor Search: Deep Research (Agent)</option>
+          <option value="always">🌐 Tor Search: Always</option>
+          <option value="off">🔒 Tor Search: Disabled</option>
         </select>
       </label>
 
-      <label class="cll-checkbox" title="Sitelerin ve .onion sayfalarının tam metnini Tor üzerinden kazır">
+      <label class="cll-checkbox" title="Scrapes full webpage and .onion contents strictly over Tor">
         <input type="checkbox" id="deep-read-check" checked onchange="syncSearchSettings()">
-        <span>📖 Derin Okuma</span>
+        <span>📖 Deep Read</span>
       </label>
 
-      <div id="tor-badge" class="cll-badge">🧅 Tor: Kontrol...</div>
-      <button id="newip-btn" class="cll-btn" onclick="rotateTorIP()" title="Yeni Tor Devresi ve Çıkış IP Adresi Al">🔄 Yeni IP</button>
-      <button class="cll-btn danger" onclick="clearAllChats(true)" title="Yerel LLM geçmiş sohbetlerini tarayıcıdan tamamen sil">🧹 Geçmişi Temizle</button>
+      <div id="tor-badge" class="cll-badge">🧅 Tor: Checking...</div>
+      <button id="newip-btn" class="cll-btn" onclick="rotateTorIP()" title="Acquire New Tor Circuit and Exit IP">🔄 New IP</button>
+      <button class="cll-btn danger" onclick="clearAllChats(true)" title="Purge local LLM chat history completely from browser">🧹 Clear History</button>
     </div>
   </header>
 
@@ -279,7 +279,7 @@
       if (starting) {
         btn.className = 'cll-power-btn loading';
         dot.textContent = '🟡';
-        txt.textContent = 'İşleniyor...';
+        txt.textContent = 'Processing...';
         return;
       }
 
@@ -288,11 +288,11 @@
         btn.className = 'cll-power-btn on';
         dot.textContent = '🟢';
         const k = Math.round((ctxVal || 32768) / 1024);
-        txt.textContent = `LLM Açık (${k}K) — Kapat`;
+        txt.textContent = `LLM Online (${k}K) — Stop`;
       } else {
         btn.className = 'cll-power-btn off';
         dot.textContent = '🔴';
-        txt.textContent = 'LLM Kapalı (Aç)';
+        txt.textContent = 'LLM Offline (Start)';
       }
     }
 
@@ -319,11 +319,11 @@
         const torBadge = document.getElementById('tor-badge');
         if (data.tor_active) {
           torBadge.className = 'cll-badge ok';
-          const ipText = data.tor_ip ? data.tor_ip : 'SOCKS5h Aktif';
+          const ipText = data.tor_ip ? data.tor_ip : 'SOCKS5h Active';
           torBadge.textContent = `🧅 Tor: ${ipText}`;
         } else {
           torBadge.className = 'cll-badge err';
-          torBadge.textContent = '🛑 Tor: Kapalı (Fail-Closed)';
+          torBadge.textContent = '🛑 Tor: Offline (Fail-Closed)';
         }
       } catch (e) {}
     }
@@ -346,7 +346,7 @@
           });
           const data = await res.json();
           if (!data.ready && data.error) {
-            alert('LLM Başlatılamadı:\n' + data.error);
+            alert('Failed to start LLM:\n' + data.error);
           }
           updatePowerUI(Boolean(data.ready), false, data.ctx || ctx);
           const frame = document.getElementById('llama-ui-frame');
@@ -375,7 +375,7 @@
         });
         const data = await res.json();
         if (!data.ready && data.error) {
-          alert('LLM Yeniden Başlatılamadı:\n' + data.error);
+          alert('Failed to restart LLM:\n' + data.error);
         }
         updatePowerUI(Boolean(data.ready), false, data.ctx || ctx);
         const frame = document.getElementById('llama-ui-frame');

@@ -334,7 +334,7 @@ cll stop
 
 - Embeds upstream `llama-ui` frontend.
 - Live token limit selector (4K to 48K context).
-- Live Tor IP rotation (`🔄 Yeni IP`) and complete browser history wiper.
+- Live Tor IP rotation (`🔄 New IP`) and complete browser history wiper.
 - Zero disk logging (`--log-disable`).
 
 ---
