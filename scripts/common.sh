@@ -52,6 +52,6 @@ wait_for_gpu() {
 
     echo "Error: Another llama.cpp instance is still running and holding VRAM:" >&2
     pgrep -l -x "${pattern}" | sed 's/^/  /' >&2
-    echo "Stop it first with: pkill -x '${pattern}'" >&2
+    echo "Stop it first with: pkill -x '${pattern}' (or pkill -9 -x '${pattern}')" >&2
     exit 1
 }

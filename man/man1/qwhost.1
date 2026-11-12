@@ -1,0 +1,36 @@
+.TH QWHOST 1 "March 2026" "Local-LLM-Unsensored" "User Commands"
+.SH NAME
+qwhost \- Tor Onion Service Host & Key Persistence Manager
+.SH SYNOPSIS
+.B qwhost start
+.I <port>
+.RI [name]
+.br
+.B qwhost stop
+.RI [name]
+.br
+.B qwhost list
+.br
+.B qwhost backup
+.RI [--dest\ path]
+.SH DESCRIPTION
+.B qwhost
+manages local Tor Onion v3 services mapped to local TCP ports (such as web servers, APIs, or CLL UI).
+It guarantees that your .onion address remains permanent and immutable across computer reboots by persisting Ed25519-V3 private keys in ~/.local/share/qwen/onion_services/ with strict 0600 permissions.
+.SH COMMANDS
+.TP
+.BI start " <port> [name]"
+Exposes local port to Tor as a persistent Onion v3 service. If [name] already exists, restores the exact same .onion URL.
+.TP
+.BI stop " [name]"
+Tears down active Onion service in the Tor daemon without deleting the private key.
+.TP
+.B list
+Displays all configured and active Onion services, target ports, and .onion hostnames.
+.TP
+.B backup
+Creates an encrypted/chmod-600 tarball archive of all onion service private keys.
+.SH SECURITY
+Never share or expose *.key files. The .onion address is derived directly from the private key.
+.SH AUTHORS
+Local-LLM-Unsensored Project

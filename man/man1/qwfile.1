@@ -6,6 +6,7 @@ qwfile \- smart file, remote URL, and hierarchical codebase analyzer using local
 [\fB\-c\fR \fI16\fR|\fI32\fR|\fI48\fR]
 [\fB\-r\fR \fI0..4\fR]
 [\fB\-f\fR \fIpdf\fR|\fItxt\fR|\fIcode\fR]
+[\fB\-\-web\fR]
 [\fB\-\-keep\fR]
 [\fB\-\-export\fR \fIpath\fR]
 \fItarget\fR
@@ -110,6 +111,10 @@ Maximum reasoning (exhaustive chain of thought for deep audits).
 Override automatic format detection.
 Supported formats: \fBpdf\fR, \fBtxt\fR, \fBcode\fR.
 .TP
+.B \-\-web\fR, \fB\-\-search
+Perform anonymous Tor-isolated web research on detected package dependencies (e.g. from \fIrequirements.txt\fR, \fIpackage.json\fR, \fICargo.toml\fR).
+Proprietary project code and local paths are never leaked; only sanitized package names are queried over Tor SOCKS5h.
+.TP
 .B \-\-keep
 Preserve intermediate modular notes generated under \fI/tmp/local\-llm/<project>/notes/\fR instead of purging them upon completion.
 .TP
@@ -131,6 +136,12 @@ Defaults to \fB8080\fR.
 .B CTX
 Manual token context size override passed to backend binaries.
 .SH FILES
+.TP
+.I .qwignore
+Project-level exclusion file to omit sensitive directories, private files, and proprietary packages from LLM context and Tor research.
+.TP
+.I ~/.config/qw/ignore
+Global user exclusion rules applied across all repositories.
 .TP
 .I /tmp/local\-llm/<project>/
 Temporary workspace directory used by the Hierarchical Codebase Analyzer for chunking and synthesis notes.

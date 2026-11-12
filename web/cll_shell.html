@@ -215,6 +215,11 @@
         <span>📖 Deep Read</span>
       </label>
 
+      <label class="cll-checkbox" title="Chain-of-Verification: Enforces scientific precision, deterministic logic invariants, and eliminates small-model hallucinations">
+        <input type="checkbox" id="verified-mode-check" checked onchange="syncSearchSettings()">
+        <span>🛡️ Verified</span>
+      </label>
+
       <div id="tor-badge" class="cll-badge">🧅 Tor: Checking...</div>
       <button id="newip-btn" class="cll-btn" onclick="rotateTorIP()" title="Acquire New Tor Circuit and Exit IP">🔄 New IP</button>
       <button class="cll-btn danger" onclick="clearAllChats(true)" title="Purge local LLM chat history completely from browser">🧹 Clear History</button>
@@ -316,6 +321,11 @@
           if (sSel && document.activeElement !== sSel) sSel.value = data.search_mode;
         }
 
+        if (data.verified_mode !== undefined) {
+          const vCheck = document.getElementById('verified-mode-check');
+          if (vCheck && document.activeElement !== vCheck) vCheck.checked = Boolean(data.verified_mode);
+        }
+
         const torBadge = document.getElementById('tor-badge');
         if (data.tor_active) {
           torBadge.className = 'cll-badge ok';
@@ -392,11 +402,12 @@
     async function syncSearchSettings() {
       const search_mode = document.getElementById('search-mode-select').value;
       const deep_read = document.getElementById('deep-read-check').checked;
+      const verified_mode = document.getElementById('verified-mode-check').checked;
       try {
         await fetch('/api/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ search_mode, deep_read })
+          body: JSON.stringify({ search_mode, deep_read, verified_mode })
         });
       } catch (e) {}
     }
@@ -404,13 +415,13 @@
     async function rotateTorIP() {
       const btn = document.getElementById('newip-btn');
       btn.disabled = true;
-      btn.textContent = '⏳ Yenileniyor...';
+      btn.textContent = '⏳ Rotating...';
       try {
         await fetch('/api/tor/newip', { method: 'POST' });
         await refreshStatus();
       } finally {
         btn.disabled = false;
-        btn.textContent = '🔄 Yeni IP';
+        btn.textContent = '🔄 New IP';
       }
     }
 

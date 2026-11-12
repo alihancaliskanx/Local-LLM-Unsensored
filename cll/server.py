@@ -11,10 +11,14 @@ import os
 import sys
 import json
 import re
+import time
+import socket
 import asyncio
 import threading
 import argparse
 import subprocess
+import atexit
+from contextlib import asynccontextmanager
 from typing import List, Dict, Optional, AsyncGenerator
 
 from fastapi import FastAPI, Request, Response
@@ -31,8 +35,30 @@ from cll import prompts
 from cll import security as security_guard
 from cll import page_reader
 from cll import search as qwsearch
+from cll import verifier
 
-app = FastAPI(title="CLL - Chat Local LLM")
+
+def cleanup_llama_server(force: bool = True):
+    """Gracefully terminates llama-server, falling back to SIGKILL if hung."""
+    try:
+        subprocess.run(["pkill", "-x", "llama-server"], capture_output=True)
+        if force:
+            time.sleep(0.3)
+            if subprocess.run(["pgrep", "-x", "llama-server"], capture_output=True).returncode == 0:
+                subprocess.run(["pkill", "-9", "-x", "llama-server"], capture_output=True)
+    except Exception:
+        pass
+
+
+@asynccontextmanager
+async def lifespan(app_instance: FastAPI):
+    yield
+    # Cleanup background llama-server on shutdown
+    cleanup_llama_server(force=True)
+
+
+app = FastAPI(title="CLL - Chat Local LLM", lifespan=lifespan)
+atexit.register(lambda: cleanup_llama_server(force=True))
 
 
 def is_local_origin(header_val: Optional[str]) -> bool:
@@ -64,25 +90,149 @@ MIN_CTX = 2048
 MAX_CTX = 49152
 CURRENT_CTX = 32768
 CURRENT_REASONING = 2
-SEARCH_MODE = "auto"   # "auto" | "always" | "deep" | "off"
+SEARCH_MODE = "deep"   # Default to "deep" (Agentic Tor Research) matching UI
 DEEP_READ = True
+VERIFIED_MODE = True
 
 AUTO_SEARCH_TRIGGERS = [
-    r"\b(latest|recent|news|current|today|release|status|price|who is)\b",
+    # English triggers
+    r"\b(latest|recent|news|current|today|release|status|price|who is|where is|when was)\b",
     r"\b(202[4-9]|203[0-9])\b",
     r"https?://",
     r"(\.onion\b|\bonion\b|hidden\s+service|dark\s*web)",
-    r"\b(what is|what are|how to|how does)\b.*\b(change|update|feature|work)\b",
-    r"\b(research|discover|explore|investigate|explain|analyze)\b"
+    r"\b(what is|what are|how to|how does|why is|explain|compare)\b.*\b(change|update|feature|work|version|spec)\b",
+    r"\b(research|discover|explore|investigate|analyze|audit|cve|advisory|vulnerability)\b",
+    r"\b(search|lookup|find|browse|google|bing|duckduckgo)\b",
+    # Turkish triggers
+    r"\b(ara|araştır|araştırma|internette|internetten|webde|webden|bul|tara|incele)\b",
+    r"\b(haberler|güncel|son\s+dakika|son\s+durum|fiyatı|fiyatları|kimdir|nedir|nelerdir|nasıl)\b",
+    r"\b(doküman|belge|versiyon|özellik|özellikleri|tarihi|güvenlik|zafiyet)\b",
+    # Command prefixes
+    r"^(?:/search|/web|!search|!web|search:|web:|ara:|bul:)\s+"
+]
+
+DEFAULT_OFFLINE_PROMPT = (
+    "You are an expert, objective technical assistant.\n\n"
+    "DIRECTIVES:\n"
+    "- Directly answer the user's questions with high accuracy, clarity, and depth.\n"
+    "- If the user asks for external information or web research without active search context, "
+    "answer directly using your comprehensive internal knowledge base.\n"
+    "- NEVER state that you lack web access, internet tools, or browsing capability. "
+    "Never apologize for lacking tools, and never output tool refusal disclaimers.\n\n"
+    "STYLE & CONCISENESS:\n"
+    "- Be direct, concise, and technically dense. Zero fluff, zero chit-chat.\n"
+    "- Respond accurately in the language of the user query."
+)
+
+
+CONVERSATIONAL_FOLLOWUPS = [
+    r'^(?:bunu\s+|bu\s+cevabı\s+|metni\s+)?(?:türkçeye|türkçe|ingilizceye|ingilizce)\s*(?:ye|e)?\s*(?:çevir|tercüme\s*et|dönüştür)\b',
+    r'^(?:translate|translate\s+(?:this|it)?\s*to\s+\w+)\b',
+    r'^(?:devam\s*et|devamını\s*yaz|continue|go\s*on|proceed)\b',
+    r'^(?:özetle|kısaca\s*anlat|kısalt|summarize|briefly)\b',
+    r'^(?:daha\s+(?:fazla\s+)?açıkla|detaylandır|örnek\s*ver|explain\s*more|clarify|give\s*(?:an\s+)?example)\b',
+    r'^(?:merhaba|selam|günaydın|iyi\s*günler|hello|hi|hey|thanks|teşekkürler|sağol)\b',
+    r'^(?:evet|hayır|tamam|ok|peki|yes|no)\b',
+    r'^(?:kodu\s+yaz|koda\s*dök|düzelt|fix|debug|refactor)\b'
 ]
 
 
+def is_conversational_followup(query: str) -> bool:
+    """Detects pure conversational follow-ups that must never trigger external web search."""
+    if not query:
+        return True
+    q = query.strip().lower()
+    if q.startswith(("/search", "/web", "!search", "!web", "search:", "web:", "ara:", "bul:")):
+        return False
+    if "http://" in q or "https://" in q or ".onion" in q:
+        return False
+    for pat in CONVERSATIONAL_FOLLOWUPS:
+        if re.search(pat, q):
+            return True
+    return False
+
+
+def detect_query_language(text: str) -> str:
+    """Detects if query is Turkish or English/other."""
+    if not text:
+        return "en"
+    t = text.lower()
+    if any(c in t for c in "çğıöşü"):
+        return "tr"
+    tr_markers = [
+        r'\b(?:ve|veya|ile|için|nasıl|nedir|nelerdir|kimdir|neden|niçin|hangisi)\b',
+        r'\b(?:ara|araştır|bul|bana|cevap|ver|anlat|açıkla|yaz|özetle|çevir)\b',
+        r'\b(?:olan|olarak|kadar|göre|sonra|önce|çünkü|fakat|ama|ancak)\b',
+        r'\b(?:parçalarım|yaparım|ederim|edilir|yapılır|parçalanır)\b'
+    ]
+    for pattern in tr_markers:
+        if re.search(pattern, t):
+            return "tr"
+    return "en"
+
+
+def sanitize_search_query(q: str) -> str:
+    """Cleans foreign grammatical inflection artifacts from search queries."""
+    q = re.sub(r'\batomu\b', 'atom', q, flags=re.IGNORECASE)
+    q = re.sub(r'\b(uranyumu|çekirdeği|nötronu|protonu|molekülü)\b',
+               lambda m: m.group(0)[:-1], q, flags=re.IGNORECASE)
+    return q.strip()
+
+
 def needs_web_search(query: str) -> bool:
-    q_lower = query.lower()
+    if not query:
+        return False
+    q_lower = query.lower().strip()
+    if is_conversational_followup(q_lower):
+        return False
+    if q_lower.startswith(("/search", "/web", "!search", "!web", "search:", "web:", "ara:", "bul:")):
+        return True
     for pattern in AUTO_SEARCH_TRIGGERS:
         if re.search(pattern, q_lower):
             return True
+    if "?" in query and len(query.split()) >= 3:
+        return True
     return False
+
+
+def determine_research_budget(prompt: str, search_mode: str) -> Dict[str, any]:
+    """
+    Dynamically sizes search sources, query limits, and deep reading scraping depth
+    based on prompt intent, technical complexity, and explicit user instructions.
+    """
+    p_lower = prompt.lower()
+    explicit_match = re.search(r'(?:--limit|-n|limit:?)\s*(\d{1,2})|\b(\d{1,2})\s*(?:kaynak|source|sources|makale|paper|papers)\b', p_lower)
+    if explicit_match:
+        requested = int(explicit_match.group(1) or explicit_match.group(2))
+        max_sources = max(3, min(requested, 16))
+        return {
+            "max_sources": max_sources,
+            "per_query_limit": min(6, max(3, max_sources // 2)),
+            "deep_read_count": min(6, max(2, max_sources // 2)),
+            "academic": True
+        }
+
+    deep_signals = [
+        r'\b(detaylı|derinlemesine|ayrıntılı|makale|makaleler|akademik|araştır|bilimsel|tez|literatür)\b',
+        r'\b(in-depth|exhaustive|academic|papers?|scientific|scholar|comprehensive|literature|mechanism|equations?)\b',
+        r'\b(fisyon|füzyon|kuantum|kriptografi|protokol|çekirdek|reaksiyon|fizik|kimya|algoritma)\b'
+    ]
+    is_deep_research = any(re.search(pat, p_lower) for pat in deep_signals)
+
+    if is_deep_research or search_mode == "deep":
+        return {
+            "max_sources": 10,
+            "per_query_limit": 5,
+            "deep_read_count": 4,
+            "academic": True
+        }
+
+    return {
+        "max_sources": 5,
+        "per_query_limit": 3,
+        "deep_read_count": 2,
+        "academic": False
+    }
 
 
 def formulate_research_queries(user_prompt: str) -> List[str]:
@@ -112,12 +262,12 @@ def formulate_research_queries(user_prompt: str) -> List[str]:
             try:
                 data = json.loads(content)
                 if isinstance(data, list) and data:
-                    return [str(q).strip() for q in data[:3] if q]
+                    return [sanitize_search_query(str(q)) for q in data[:3] if q]
             except Exception:
                 pass
             matches = re.findall(r'"([^"\n]{3,60})"', content)
             if matches:
-                return matches[:3]
+                return [sanitize_search_query(m) for m in matches[:3]]
     except Exception:
         pass
     return []
@@ -126,9 +276,9 @@ def formulate_research_queries(user_prompt: str) -> List[str]:
 def is_llama_running() -> bool:
     try:
         r = requests.get(f"{LLAMA_URL}/health", timeout=0.8)
-        return r.status_code == 200
+        return r.status_code in (200, 503)
     except Exception:
-        return False
+        return subprocess.run(["pgrep", "-x", "llama-server"], capture_output=True).returncode == 0
 
 
 def get_proxyctl_status() -> Dict[str, any]:
@@ -231,28 +381,44 @@ async def api_status():
     status["reasoning"] = CURRENT_REASONING
     status["search_mode"] = SEARCH_MODE
     status["deep_read"] = DEEP_READ
+    status["verified_mode"] = VERIFIED_MODE
     return JSONResponse(status)
 
 
 @app.post("/api/settings")
 async def api_settings(request: Request):
-    global SEARCH_MODE, DEEP_READ
+    global SEARCH_MODE, DEEP_READ, VERIFIED_MODE
     data = await request.json()
     if "search_mode" in data:
         SEARCH_MODE = str(data["search_mode"])
     if "deep_read" in data:
         DEEP_READ = bool(data["deep_read"])
-    return JSONResponse({"ok": True, "search_mode": SEARCH_MODE, "deep_read": DEEP_READ})
+    if "verified_mode" in data:
+        VERIFIED_MODE = bool(data["verified_mode"])
+    return JSONResponse({"ok": True, "search_mode": SEARCH_MODE, "deep_read": DEEP_READ, "verified_mode": VERIFIED_MODE})
 
 
 @app.post("/api/tor/newip")
 async def api_tor_newip():
+    output = ""
+    success = False
     try:
         res = subprocess.run(["proxyctl", "tor", "newip"], capture_output=True, text=True, timeout=8)
-        status = get_proxyctl_status()
-        return JSONResponse({"success": res.returncode == 0, "status": status, "output": res.stdout.strip()})
-    except Exception as e:
-        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+        if res.returncode == 0:
+            success = True
+            output = res.stdout.strip()
+    except Exception:
+        pass
+
+    if not success:
+        try:
+            success = qwsearch.rotate_tor_circuit()
+            output = "Tor circuit rotated successfully" if success else "Tor Control Port signal failed"
+        except Exception as e:
+            output = str(e)
+
+    status = get_proxyctl_status()
+    return JSONResponse({"success": success, "status": status, "output": output})
 
 
 @app.post("/api/llm/start")
@@ -266,9 +432,9 @@ async def api_llm_start(request: Request):
     CURRENT_CTX = ctx
     CURRENT_REASONING = reasoning
 
-    # Stop any existing llama-server process
-    subprocess.run(["pkill", "-x", "llama-server"], capture_output=True)
-    await asyncio.sleep(0.6)
+    # Stop any existing llama-server process (SIGTERM with SIGKILL fallback)
+    cleanup_llama_server(force=True)
+    await asyncio.sleep(0.3)
 
     # Determine reasoning flags
     r_flags = {
@@ -323,8 +489,8 @@ async def api_llm_start(request: Request):
 
 @app.post("/api/llm/stop")
 async def api_llm_stop():
-    subprocess.run(["pkill", "-x", "llama-server"], capture_output=True)
-    await asyncio.sleep(0.4)
+    cleanup_llama_server(force=True)
+    await asyncio.sleep(0.3)
     return JSONResponse({"ready": is_llama_running()})
 
 
@@ -386,7 +552,12 @@ async def proxy_pass_through(request: Request):
 
 
 # OpenAI Chat Completion Interceptor with Tor Web / .onion Search
-async def completion_stream(payload: dict, search_summary_md: Optional[str] = None) -> AsyncGenerator[str, None]:
+async def completion_stream(
+    payload: dict,
+    search_summary_md: Optional[str] = None,
+    verified_mode: bool = False,
+    query_lang: str = "tr"
+) -> AsyncGenerator[str, None]:
     if search_summary_md:
         initial_chunk = {
             "choices": [{
@@ -406,7 +577,7 @@ async def completion_stream(payload: dict, search_summary_md: Optional[str] = No
                 f"{LLAMA_URL}/v1/chat/completions",
                 json=payload,
                 stream=True,
-                timeout=90
+                timeout=120
             ) as req:
                 for line in req.iter_lines():
                     if not line:
@@ -419,25 +590,85 @@ async def completion_stream(payload: dict, search_summary_md: Optional[str] = No
 
     threading.Thread(target=_stream_worker, daemon=True).start()
 
-    while True:
-        item = await queue.get()
-        if item is None:
-            break
-        if isinstance(item, Exception):
+    if not verified_mode:
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            if isinstance(item, Exception):
+                err_chunk = {
+                    "choices": [{
+                        "index": 0,
+                        "delta": {"content": f"\n\n**Error:** LLM connection error: {str(item)}"},
+                        "finish_reason": "error"
+                    }]
+                }
+                yield f"data: {json.dumps(err_chunk)}\n\n"
+                yield "data: [DONE]\n\n"
+                break
+            if item.startswith("data: "):
+                yield f"{item}\n\n"
+                if item[6:].strip() == "[DONE]":
+                    break
+    else:
+        full_text_parts = []
+        has_error = None
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            if isinstance(item, Exception):
+                has_error = item
+                break
+            if item.startswith("data: "):
+                raw_payload = item[6:].strip()
+                if raw_payload == "[DONE]":
+                    break
+                try:
+                    chunk_obj = json.loads(raw_payload)
+                    delta_content = chunk_obj.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                    if delta_content:
+                        full_text_parts.append(delta_content)
+                except Exception:
+                    pass
+
+        if has_error:
             err_chunk = {
                 "choices": [{
                     "index": 0,
-                    "delta": {"content": f"\n\n**Error:** LLM connection error: {str(item)}"},
+                    "delta": {"content": f"\n\n**Error:** LLM connection error: {str(has_error)}"},
                     "finish_reason": "error"
                 }]
             }
             yield f"data: {json.dumps(err_chunk)}\n\n"
             yield "data: [DONE]\n\n"
-            break
-        if item.startswith("data: "):
-            yield f"{item}\n\n"
-            if item[6:].strip() == "[DONE]":
-                break
+            return
+
+        full_text = "".join(full_text_parts)
+        verified_text = verifier.correct_terminology_and_logic(full_text, lang=query_lang)
+
+        # Progressive slice streaming to UI
+        chunk_size = 40
+        for i in range(0, len(verified_text), chunk_size):
+            slice_text = verified_text[i:i + chunk_size]
+            c = {
+                "choices": [{
+                    "index": 0,
+                    "delta": {"content": slice_text},
+                    "finish_reason": None
+                }]
+            }
+            yield f"data: {json.dumps(c)}\n\n"
+
+        done_chunk = {
+            "choices": [{
+                "index": 0,
+                "delta": {},
+                "finish_reason": "stop"
+            }]
+        }
+        yield f"data: {json.dumps(done_chunk)}\n\n"
+        yield "data: [DONE]\n\n"
 
 
 @app.post("/v1/chat/completions")
@@ -464,11 +695,16 @@ async def chat_completions_handler(request: Request):
             last_user_msg = m.get("content", "")
             break
 
+    query_lang = detect_query_language(last_user_msg)
+    is_followup = is_conversational_followup(last_user_msg)
+    context_info = verifier.resolve_conversation_context(messages)
+
     do_search = False
-    if SEARCH_MODE in ("always", "deep"):
-        do_search = True
-    elif SEARCH_MODE == "auto":
-        do_search = needs_web_search(last_user_msg)
+    if not is_followup:
+        if SEARCH_MODE in ("always", "deep"):
+            do_search = True
+        elif SEARCH_MODE == "auto":
+            do_search = needs_web_search(last_user_msg)
 
     sources = []
     deep_pages = []
@@ -507,6 +743,12 @@ async def chat_completions_handler(request: Request):
                 })
                 engine_name = "Tor Direct Scrape"
 
+        # Determine dynamic research budget based on prompt and mode
+        budget = determine_research_budget(last_user_msg, SEARCH_MODE)
+        max_sources = budget["max_sources"]
+        per_query_limit = budget["per_query_limit"]
+        deep_read_target = budget["deep_read_count"]
+
         # 2. Agentic Multi-Query or Standard Search Cascade
         wants_onion = bool(re.search(r'(\.onion|\bonion\b|hidden\s+service|dark\s*web)', last_user_msg, re.IGNORECASE))
         is_exploratory = (SEARCH_MODE == "deep") or bool(re.search(
@@ -515,8 +757,22 @@ async def chat_completions_handler(request: Request):
             re.IGNORECASE
         ))
 
+        search_prompt = re.sub(r"^(?:/search|/web|!search|!web|search:|web:|ara:|bul:)\s+", "", last_user_msg, flags=re.IGNORECASE).strip() or last_user_msg
+
+        if context_info.get("has_history") and len(search_prompt.split()) <= 4 and context_info.get("last_topic"):
+            enriched_prompt = f"{context_info['last_topic']} {search_prompt}"
+        else:
+            enriched_prompt = search_prompt
+
         if not deep_pages and (is_exploratory and not explicit_urls):
-            generated_queries = await loop.run_in_executor(None, formulate_research_queries, last_user_msg)
+            generated_queries = await loop.run_in_executor(None, formulate_research_queries, enriched_prompt)
+
+        # Verified Mode: Augment with multi-hop factual sub-queries to eliminate reasoning amnesia
+        if VERIFIED_MODE and not deep_pages and (is_exploratory and not explicit_urls):
+            decomposed = verifier.decompose_reasoning_query(search_prompt, query_lang)
+            for dq in decomposed:
+                if dq not in generated_queries:
+                    generated_queries.append(dq)
 
         if not deep_pages and generated_queries:
             engine_name = f"Agentic Research ({len(generated_queries)} queries)"
@@ -524,9 +780,9 @@ async def chat_completions_handler(request: Request):
             for q in generated_queries:
                 q_onion = wants_onion or bool(re.search(r'(\.onion|\bonion\b|hidden\s+service)', q, re.IGNORECASE))
                 if q_onion:
-                    q_res = await loop.run_in_executor(None, qwsearch.search_ahmia_onion, q, 3)
+                    q_res = await loop.run_in_executor(None, qwsearch.search_ahmia_onion, q, per_query_limit)
                 else:
-                    q_res, _ = await loop.run_in_executor(None, qwsearch.execute_search_cascade, q, 3)
+                    q_res, _ = await loop.run_in_executor(None, qwsearch.execute_search_cascade, q, per_query_limit)
                 for r in q_res:
                     if r.get("url") not in existing_urls:
                         sources.append(r)
@@ -534,7 +790,7 @@ async def chat_completions_handler(request: Request):
 
         # Fallback to standard regex query if agentic loop generated no queries
         if not deep_pages and not sources and (not explicit_urls):
-            clean_query = last_user_msg
+            clean_query = search_prompt
             for u in explicit_urls:
                 clean_query = clean_query.replace(u, "")
             for ro in raw_onions:
@@ -543,16 +799,21 @@ async def chat_completions_handler(request: Request):
                 r'\b(in the page|from site|on website|looking for|search for|about|steps|how to|what is|tell me|explain|summarize|briefly|details|which|list|security|features|project|management)\b',
                 '', clean_query, flags=re.IGNORECASE
             )
+            clean_query = re.sub(
+                r'\b(web\s*de|web\s*den|webde|webden|internette|internetten|ara|araştır|araştırma|bul|bana|hakkında|bilgi|ver|nedir|nelerdir|nasıl|sen|cevap\s*ver|cevap|en\s+basit|basitçe|basit|lütfen)\b',
+                '', clean_query, flags=re.IGNORECASE
+            )
             clean_query = re.sub(r'(\.onion|\bonion\b|hidden\s+service\w*|dark\s*web\w*)', '', clean_query, flags=re.IGNORECASE)
-            clean_query = re.sub(r'[?!.,;:]+', ' ', clean_query)
+            clean_query = re.sub(r'[?!.,;:\"\'`]+', ' ', clean_query)
+            clean_query = sanitize_search_query(clean_query)
             clean_query = re.sub(r'\s+', ' ', clean_query).strip()
 
-            search_term = clean_query if clean_query else last_user_msg
+            search_term = clean_query if clean_query else search_prompt
             if wants_onion and not explicit_urls:
-                results = await loop.run_in_executor(None, qwsearch.search_ahmia_onion, search_term, 5)
+                results = await loop.run_in_executor(None, qwsearch.search_ahmia_onion, search_term, max_sources)
                 engine_used = "Ahmia (.onion Discovery)"
             else:
-                results, engine_used = await loop.run_in_executor(None, qwsearch.execute_search_cascade, search_term, 5)
+                results, engine_used = await loop.run_in_executor(None, qwsearch.execute_search_cascade, search_term, max_sources)
 
             existing_urls = {s["url"] for s in sources}
             for r in results:
@@ -574,9 +835,11 @@ async def chat_completions_handler(request: Request):
                 sources.insert(0, wiki_spec)
                 existing_urls.add(wiki_spec.get("url"))
 
+        sources = sources[:max_sources]
+
         # Deep reading for top search candidates
         if (DEEP_READ or wants_onion or is_exploratory) and not explicit_urls and sources:
-            candidates = [c.get("url") for c in sources[:3] if c.get("url", "").startswith("http")]
+            candidates = [c.get("url") for c in sources[:deep_read_target] if c.get("url", "").startswith("http")]
             if candidates:
                 tasks = [
                     loop.run_in_executor(None, page_reader.fetch_page_text_tor, u, 3500, 14)
@@ -586,7 +849,8 @@ async def chat_completions_handler(request: Request):
                     scraped = await coro
                     if scraped and scraped.get("text"):
                         deep_pages.append(scraped)
-                        break
+                        if len(deep_pages) >= (deep_read_target // 2 + 1):
+                            break
 
         sandboxed_data, injection_detected, warnings = security_guard.build_sandboxed_context(
             last_user_msg, sources, deep_pages
@@ -614,16 +878,59 @@ async def chat_completions_handler(request: Request):
                 f"\n---\n"
             )
 
-            if is_exploratory or wants_onion:
+            if wants_onion:
                 sys_instruction = f"{prompts.DARK_WEB_RESEARCHER_PROMPT}\n\n{sandboxed_data}"
             else:
                 sys_instruction = f"{prompts.STANDARD_ASSISTANT_PROMPT}\n\n{sandboxed_data}"
 
+            lang_directive = (
+                "\n\n🚨 DİL ZORUNLULUĞU (MANDATORY LANGUAGE DIRECTIVE):\n"
+                "Kullanıcı Türkçe talimat vermiştir. Yanıtınızın TAMAMINI (tüm başlıklar, açıklamalar, analizler ve sonuçlar) EKSİKSİZ TÜRKÇE olarak yazın.\n"
+                "Alıntılanan kaynaklar İngilizce olsa dahi bilgileri Türkçe açıklayın. Kullanıcı açıkça talep etmedikçe ASLA İngilizce yanıt vermeyin."
+                if query_lang == "tr" else ""
+            )
+            sys_instruction += lang_directive
+
+            if context_info.get("has_history") and context_info.get("summary"):
+                sys_instruction += f"\n\n### 💬 Conversation Context:\n{context_info['summary']}"
+
             filtered = [m for m in messages if m.get("role") != "system"]
             data["messages"] = [{"role": "system", "content": sys_instruction}] + filtered
+        else:
+            # When web search was attempted over Tor but returned no results
+            fallback_instruction = (
+                f"{prompts.STANDARD_ASSISTANT_PROMPT}\n\n"
+                f"### System Notice\n"
+                f"An anonymous Tor web search was conducted for '{search_prompt}', but no external search hits were retrieved on the current Tor circuit.\n"
+                f"Directly answer the user's inquiry with your internal knowledge with high precision.\n"
+                f"NEVER claim to lack internet tools, never apologize, and never output tool refusal statements."
+            )
+            lang_directive = (
+                "\n\n🚨 DİL ZORUNLULUĞU (MANDATORY LANGUAGE DIRECTIVE):\n"
+                "Kullanıcı Türkçe talimat vermiştir. Yanıtınızın TAMAMINI (tüm başlıklar, açıklamalar, analizler ve sonuçlar) EKSİKSİZ TÜRKÇE olarak yazın.\n"
+                "Kullanıcı açıkça talep etmedikçe ASLA İngilizce yanıt vermeyin."
+                if query_lang == "tr" else ""
+            )
+            fallback_instruction += lang_directive
+            filtered = [m for m in messages if m.get("role") != "system"]
+            data["messages"] = [{"role": "system", "content": fallback_instruction}] + filtered
+    else:
+        # Guarantee default technical system prompt to eliminate tool-refusal hallucinations
+        has_system = any(m.get("role") == "system" for m in messages)
+        lang_prompt = (
+            "\n\n🚨 DİL ZORUNLULUĞU (MANDATORY LANGUAGE DIRECTIVE):\n"
+            "Kullanıcı Türkçe talimat vermiştir. Yanıtınızı EKSİKSİZ TÜRKÇE olarak verin. Asla İngilizce yanıt vermeyin."
+            if query_lang == "tr" else ""
+        )
+        if not has_system:
+            data["messages"] = [{"role": "system", "content": DEFAULT_OFFLINE_PROMPT + lang_prompt}] + messages
+        else:
+            for m in data["messages"]:
+                if m.get("role") == "system":
+                    m["content"] += f"\n\nNote: Answer directly using internal knowledge. Never state that you lack web access.{lang_prompt}"
 
     return StreamingResponse(
-        completion_stream(data, search_summary_md),
+        completion_stream(data, search_summary_md, verified_mode=VERIFIED_MODE, query_lang=query_lang),
         media_type="text/event-stream"
     )
 
@@ -635,8 +942,37 @@ def main():
     parser.add_argument("--no-browser", action="store_true", help="Do not automatically open browser on startup")
     args = parser.parse_args()
 
+    # If port is held by a previous instance, terminate stale instance
+    curr_pid = os.getpid()
+    test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    test_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        test_sock.bind((args.host, args.port))
+        test_sock.close()
+    except OSError as e:
+        if e.errno == 98:
+            sys.stderr.write(f"[CLL] Port {args.port} is already busy. Terminating stale CLL instance...\n")
+            try:
+                out = subprocess.check_output(["pgrep", "-f", "cll\\.server|cll/server\\.py"], text=True)
+                for pid_str in out.strip().split():
+                    pid = int(pid_str)
+                    if pid != curr_pid:
+                        os.kill(pid, signal.SIGTERM)
+                for _ in range(25):
+                    time.sleep(0.1)
+                    try:
+                        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                        s.bind((args.host, args.port))
+                        s.close()
+                        break
+                    except OSError:
+                        pass
+            except Exception:
+                pass
+
     # Guarantee cold start: Ensure LLM is OFF on startup (0 VRAM used until user explicitly toggles on)
-    subprocess.run(["pkill", "-x", "llama-server"], capture_output=True)
+    cleanup_llama_server(force=True)
 
     print("═══════════════════════════════════════════════════════════════")
     print(f" ⚡ CLL — Chat Local LLM (Port: {args.port})")
@@ -646,12 +982,12 @@ def main():
     print(" 🛡️  Security: Multi-layer prompt injection filter & read-only")
     print(" 🧅 .onion:    Native hidden service discovery & scraping")
     print(" 🧹 Privacy:   Zero disk logging (--log-disable) & storage wipe")
+    print(" 🛑 Stop:      Press Ctrl+C to stop (Ctrl+Z to background)")
     print("═══════════════════════════════════════════════════════════════")
 
     # Automatically open browser once server is bound
     if not args.no_browser:
         def _auto_open_browser():
-            import time
             time.sleep(0.6)
             ui_url = f"http://{args.host}:{args.port}"
             try:
@@ -665,7 +1001,13 @@ def main():
         import threading
         threading.Thread(target=_auto_open_browser, daemon=True).start()
 
-    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    try:
+        uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    finally:
+        cleanup_llama_server(force=True)
+        print("\n[CLL] Server stopped. Background resources released.")
 
 
 if __name__ == "__main__":

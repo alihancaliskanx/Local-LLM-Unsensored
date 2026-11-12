@@ -5,6 +5,7 @@ qwsec \- security audit, vulnerability discovery, and exploit analysis using loc
 .B qwsec
 [\fB\-c\fR \fI16\fR|\fI32\fR|\fI48\fR]
 [\fB\-r\fR \fI0..4\fR]
+[\fB\-\-web\fR]
 \fItarget\fR
 [\fIprompt\fR...]
 .PP
@@ -13,6 +14,7 @@ qwsec \- security audit, vulnerability discovery, and exploit analysis using loc
 .B qwsec
 [\fB\-c\fR \fI16\fR|\fI32\fR|\fI48\fR]
 [\fB\-r\fR \fI0..4\fR]
+[\fB\-\-web\fR]
 [\fIprompt\fR...]
 .SH DESCRIPTION
 .B qwsec
@@ -26,6 +28,12 @@ Set context window size (16, 32, or 48 thousand tokens). Default is 32.
 .TP
 .BI \-r " level"
 Set reasoning effort level (\fI0\fR to \fI4\fR). Default is 2. Higher levels (3 or 4) are recommended for deep vulnerability discovery.
+.TP
+.B \-\-web\fR, \fB\-\-search
+Query Tor SOCKS5h anonymously for live CVE advisories and vulnerability reports affecting detected package dependencies.
+.TP
+.B \-\-offline
+Perform air-gapped security audits using the local CVE knowledge base with zero outbound network calls.
 .SH EXAMPLES
 .PP
 Audit a C source file for memory safety and race conditions:
@@ -41,6 +49,13 @@ Audit piped configuration through stdin:
 sudo cat /etc/ssh/sshd_config | qwsec "Audit SSH daemon security posture"
 .fi
 .RE
+.SH FILES
+.TP
+.I .qwignore
+Project-level exclusion file to omit sensitive directories, private files, and proprietary packages from security scans and Tor research.
+.TP
+.I ~/.config/qw/ignore
+Global user exclusion rules applied across all repositories.
 .SH SEE ALSO
 .BR qwfile (1),
 .BR qwcli (1),

@@ -334,6 +334,7 @@ def main():
     p_file.add_argument("-f", "--format", default="", help="File format override (e.g. pdf, txt, code)")
     p_file.add_argument("--keep", action="store_true", help="Preserve persistent copy of notes and report under ~/.local/share/local-llm/reports/")
     p_file.add_argument("--export", default=None, help="Custom export directory for reports and notes")
+    p_file.add_argument("--web", "--search", dest="web_search", action="store_true", help="Perform Tor-isolated web research for project dependencies and best practices")
 
     # 2. sec subcommand (qwsec)
     p_sec = subparsers.add_parser("sec", help="Security audit and vulnerability analysis")
@@ -341,6 +342,8 @@ def main():
     p_sec.add_argument("prompt", nargs="*", default=[], help="Extra user instructions")
     p_sec.add_argument("-c", "--ctx", type=int, default=32768, help="Context tokens (default: 32768)")
     p_sec.add_argument("-r", "--reasoning", type=int, default=2, choices=[0, 1, 2, 3, 4], help="Reasoning level")
+    p_sec.add_argument("--web", "--search", dest="web_search", action="store_true", help="Perform Tor-isolated web research for vulnerabilities affecting identified dependencies")
+    p_sec.add_argument("--offline", action="store_true", help="Query local offline CVE advisory cache with zero network requests")
 
     # 3. pipe subcommand (qwpipe)
     p_pipe = subparsers.add_parser("pipe", help="Analyze input streamed through stdin pipe")
@@ -403,7 +406,8 @@ def main():
                 reasoning_level=reasoning_level,
                 base_notes_dir="/tmp/local-llm",
                 keep_archive=args.keep,
-                export_dir=args.export
+                export_dir=args.export,
+                web_research=args.web_search
             )
             sys.exit(0)
 
@@ -435,6 +439,19 @@ def main():
             except Exception:
                 pass
 
+        # Optional Tor-isolated web research for single file
+        web_context = ""
+        if args.web_search and content:
+            try:
+                from cll.manifest_extractor import extract_code_dependencies, fetch_dependency_research
+                from cll.qwignore import find_qwignore_root
+                proj_root = find_qwignore_root(args.target) if args.target else None
+                deps = extract_code_dependencies(content, project_dir=proj_root)
+                if deps:
+                    web_context = fetch_dependency_research(deps, project_dir=proj_root)
+            except Exception as e:
+                sys.stderr.write(f"[qwfile --web] Warning: Web research failed: {e}\n")
+
         sys.stderr.write(f"── [Qwen3-4B | File: {label} | Max Tokens: {ctx} ({ctx // 1024}k) | Reasoning: {r_cfg['label']} ({r_cfg['level']})] ──\n")
         system_prompt = (
             "You are an expert software and document analysis assistant. "
@@ -444,6 +461,7 @@ def main():
         full_user_prompt = (
             f"Request: {prompt_text}\n\n"
             f"{dep_context}"
+            f"{web_context}"
             f"Content to analyze ({label}):\n"
             f"```\n{content}\n```"
         )
@@ -477,10 +495,34 @@ def main():
             "Identify security vulnerabilities (OWASP/CWE, memory safety, injection, broken crypto, auth flaws, logic bugs). "
             "For each finding, explain the exploit mechanism, severity level, and provide safe refactored code."
         )
+        web_context = ""
+        if getattr(args, "offline", False) and code_content:
+            try:
+                from cll.manifest_extractor import extract_code_dependencies
+                from cll.cve_cache import lookup_offline_advisories
+                deps = extract_code_dependencies(code_content)
+                if deps:
+                    web_context = lookup_offline_advisories(deps)
+                    sys.stderr.write(f"[qwsec --offline] Loaded offline advisories for dependencies: {', '.join(deps)}\n")
+            except Exception as e:
+                sys.stderr.write(f"[qwsec --offline] Warning: Offline lookup failed: {e}\n")
+        elif args.web_search and code_content:
+            try:
+                from cll.manifest_extractor import extract_code_dependencies, fetch_dependency_research
+                from cll.qwignore import find_qwignore_root
+                proj_root = find_qwignore_root(filename) if filename else None
+                deps = extract_code_dependencies(code_content, project_dir=proj_root)
+                if deps:
+                    web_context = fetch_dependency_research(deps, project_dir=proj_root)
+            except Exception as e:
+                sys.stderr.write(f"[qwsec --web] Warning: Web research failed: {e}\n")
+
         user_prompt = (
             f"Please perform a detailed security audit on the following code.\n\n"
             f"Target: {label}\n```\n{code_content}\n```\n"
         )
+        if web_context:
+            user_prompt += f"\n{web_context}\n"
         if prompt_text:
             user_prompt += f"\nAdditional Instructions: {prompt_text}\n"
 

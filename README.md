@@ -73,6 +73,7 @@ When running `Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf` (~2.5 GB
 | `web/cll_shell.html` | CLL top control bar (power toggle, 4K–48K token selector, Tor status/IP rotation, storage wipe) |
 | `web/llama-ui/` | Embedded upstream `llama-ui` SvelteKit static bundle |
 | `man/man1/` | Section 1 UNIX manual pages (`qwfile.1`, `qwsec.1`, `qwpipe.1`, `qwcli.1`, `qwserver.1`) |
+| `guide/` | Operational security and anonymous technical research guides |
 | `tests/test_suite.py` | Automated unit test suite covering symbol resolution, project analyzer, sandbox escaping, and CSRF |
 | `.gitignore` | Excludes `*.gguf` model weights, partial downloads, Python bytecode, and runtime logs |
 
@@ -158,14 +159,15 @@ The shell integration provides high-performance developer commands with automati
 | Command | Shorthand | Description | Primary Example |
 | :--- | :--- | :--- | :--- |
 | `qwfile` | — | File, codebase, repository, and URL analyzer with RAM symbol resolution | `qwfile -c 32 -r 3 src/ "Analyze system architecture"` |
-| `qwsec` | — | Security audit and CWE/OWASP vulnerability scanner | `qwsec cll/server.py "Check for CSRF and injection"` |
+| `qwsec` | — | Security audit and CWE/OWASP vulnerability scanner (with `--offline` air-gapped cache) | `qwsec --offline src/server.py "Check for injection"` |
 | `qwpipe` | — | Piped stream processor for shell stdout/stderr | `git diff \| qwpipe "Review changes for breaking bugs"` |
 | `qwcli` | `qwc` | Interactive terminal chat or single-turn query (`-s`) | `qwcli -c 32 -r 2` |
 | `qws` | — | Single-turn query shortcut (unquoted prompts supported) | `qws explain Kalman filter sensor fusion in robotics` |
-| `qwsearch` | `qwsr` | Tor-isolated web search with local Qwen synthesis | `qwsearch -r 3 "Linux 6.13 scheduler changes"` |
+| `qwsearch` | `qwsr` | Tor-isolated web search with local Qwen synthesis (`--chaff` traffic entropy) | `qwsearch --chaff -r 3 "Linux 6.13 scheduler"` |
+| `qwdoctor` | `qw check` | Diagnostic environment health check and OPSEC verification | `qwdoctor` / `qw check` |
 | `qwserver` | `qw` | Launches `llama-server` with custom context, port, and reasoning | `qwserver -c 32 -p 8080 -r 2` |
 | `qstop` | — | Terminates active `llama-server` and `llama-cli` processes | `qstop` |
-| `cll` | — | Launches Chat Local LLM Web UI (`127.0.0.1:41625`) | `cll` / `cll stop` |
+| `cll` | — | Launches Chat Local LLM Web UI (`127.0.0.1:41625`, foreground / Ctrl+C) | `cll` / `cll stop` |
 
 ---
 
@@ -176,11 +178,12 @@ The shell integration provides high-performance developer commands with automati
 `qwfile` is a unified code and document analysis engine capable of analyzing single files, remote links, and whole multi-thousand-file repositories.
 
 ```bash
-qwfile [-c 16|32|48] [-r 0..4] [-f pdf|txt|code] [--keep] [--export <dir>] <target> [prompt...]
+qwfile [-c 16|32|48] [-r 0..4] [-f pdf|txt|code] [--web] [--keep] [--export <dir>] <target> [prompt...]
 ```
 
 - **Smart Path & Alias Resolution:** Automatically resolves relative paths, `~` tilde paths, fuzzy project names (e.g. `my-project` resolved under `~/Projects/` or `~/Code/`), and local subdirectories.
 - **In-Memory Dependency Symbol Resolver (RAM Cache):** When inspecting a C/C++ or Python file, `qwfile` scans `#include` and `import` statements, statically extracts class, struct, enum, and function signatures into RAM cache in < 10 ms, filters down to only the symbols actually referenced in the target file, and injects them into the prompt.
+- **Anonymous Dependency Research (`--web` / `--search`) & `.qwignore`:** Scans project manifests (`requirements.txt`, `package.json`, `Cargo.toml`, etc.), extracts public package names, and queries Tor SOCKS5h (`127.0.0.1:9050`) for live security advisories without ever leaking project code. Proprietary libraries (`pkg:corp-*`) and sensitive paths (`secrets/`) are automatically masked via `.qwignore` (see `.qwignore.example`, [OPSEC Guide](file:///home/sups/Local-LLM-Unsensored/guide/opsec_codebase_search.md) and [Anonymous Research Guide](file:///home/sups/Local-LLM-Unsensored/guide/anonymous_research_guide.md)).
 - **Remote Repositories & URLs over Tor:** Supports GitHub repository shorthand (`owner/repo` or `owner/repo/path/to/file`) and raw web URLs, downloading and analyzing text strictly through Tor SOCKS5h (`127.0.0.1:9050`).
 - **Hierarchical Project & Directory Explorer:** When `<target>` is a directory or repository (e.g. `qwfile my-project` or `qwfile .`):
   1. **Tree Exploration (`ls`):** Maps the directory structure, filtering out `.git`, `__pycache__`, `.venv`, and binary artifacts.
@@ -191,6 +194,7 @@ qwfile [-c 16|32|48] [-r 0..4] [-f pdf|txt|code] [--keep] [--export <dir>] <targ
   - `-c 16|32|48`: Context tokens (16K, 32K [default], 48K max ceiling).
   - `-r 0..4`: Reasoning effort (0: `off`, 1: `low`, 2: `medium` [default], 3: `high`, 4: `max`).
   - `-f pdf|txt|code`: Format override (PDF files are extracted via `pdftotext`).
+  - `--web`: Enables Tor-isolated web research on detected package dependencies.
   - `--keep`: Copies the complete notes and report from `/tmp/` to permanent storage under `~/.local/share/local-llm/reports/<project>_<timestamp>/`.
   - `--export <dir>`: Exports the complete analysis workspace to a custom directory.
 
@@ -201,6 +205,9 @@ qwfile src/core/engine.h "Explain state management and concurrency controls"
 
 # Analyze a whole repository with hierarchical chunking and live streaming
 qwfile my-project "Analyze overall architecture, data pipeline, and error handling"
+
+# Hybrid audit: inspect repository and search Tor anonymously for modern library best practices
+qwfile --web -c 32 src/ "Audit architecture and recommend dependency upgrades"
 
 # Analyze a remote GitHub repository over Tor with high reasoning
 qwfile torproject/tor -r 3 "Describe connection handshake and hidden service directory architecture"
@@ -216,17 +223,22 @@ qwfile src/ --keep "Audit memory safety and concurrency risks"
 `qwsec` runs deep vulnerability inspections against OWASP Top 10, CWE, memory safety issues, injection, broken crypto, authentication flaws, and logic bugs.
 
 ```bash
-qwsec [-c 16|32|48] [-r 0..4] <file_or_code> [prompt...]
+qwsec [-c 16|32|48] [-r 0..4] [--web] [--offline] <file_or_code> [prompt...]
 ```
 
 - Accepts a file path, a raw code string, or piped code from stdin.
 - Automatically applies `prompts/cli_rules.md` security personas.
+- `--web`: Anonymously checks Tor SOCKS5h for known CVEs affecting imported packages.
+- `--offline`: Zero-network air-gapped vulnerability audit using the local CVE advisory cache.
 - Identifies vulnerability severity, explains exploit vectors, and outputs hardened refactored code.
 
 ##### Examples:
 ```bash
-# Audit a Python backend server
-qwsec cll/server.py "Check for CSRF, SSRF, and unauthenticated endpoints"
+# Audit a Python backend server with live Tor dependency research
+qwsec --web cll/server.py "Check for CSRF, SSRF, and unauthenticated endpoints"
+
+# Air-gapped offline security audit (zero network packets emitted)
+qwsec --offline src/driver.c "Check for buffer overflows and race conditions"
 
 # Pipe code directly from git diff or clipboard
 git show HEAD | qwsec "Audit commit for security regressions"
@@ -287,10 +299,11 @@ qwcli -r 4 -s -p "Prove that the square root of 2 is irrational"
 `qwsearch` queries external search engines and `.onion` hidden services strictly over Tor SOCKS5h (`127.0.0.1:9050`):
 
 ```bash
-qwsearch [-r 0..4] [-n limit] [--raw] [--json] [--leak-test] [--new-circuit] <query>
+qwsearch [-r 0..4] [-n limit] [--raw] [--json] [--leak-test] [--new-circuit] [--chaff] <query>
 ```
 
 - **Strict Fail-Closed OPSEC:** Aborts immediately if Tor is offline. Uses `socks5h://` so all DNS resolution occurs on the Tor exit node.
+- **Traffic Analysis Resistance (`--chaff` / `--decoy`):** Emits randomized decoy queries with jitter delays to defeat timing and query correlation at Tor exit nodes.
 - **Multi-Engine Cascade:** Queries DuckDuckGo HTML, Bing (Tor), Wikipedia REST API, and GitHub Search API.
 - **Native `.onion` Discovery:** Automatically queries Ahmia hidden service search for `.onion` and dark web queries.
 
@@ -298,6 +311,9 @@ qwsearch [-r 0..4] [-n limit] [--raw] [--json] [--leak-test] [--new-circuit] <qu
 ```bash
 # Web search with Qwen synthesis
 qwsearch "Arch Linux latest package updates"
+
+# Search with decoy traffic against exit node timing analysis
+qwsearch --chaff "Linux 6.13 scheduler changes"
 
 # High reasoning search on technical protocol
 qwsearch -r 3 "Ed25519 signature malleability vulnerabilities"
@@ -325,13 +341,15 @@ qstop
 
 #### 7. Chat Local LLM Web Gateway (`cll`)
 
-`cll` launches the full-featured browser interface on `http://127.0.0.1:41625` with integrated Tor controls and LLM power management:
+`cll` launches the browser interface on `http://127.0.0.1:41625` in the **foreground** with integrated Tor controls and LLM power management:
 
 ```bash
 cll
 cll stop
 ```
 
+- **Foreground Lifecycle:** Press `Ctrl+C` to cleanly stop the server and release GPU memory. Press `Ctrl+Z` and run `bg` if you wish to run it in the background.
+- **Autonomous Deep Research:** Automatically triggers Tor search for research questions, Turkish/English queries, and explicit `/search` directives.
 - Embeds upstream `llama-ui` frontend.
 - Live token limit selector (4K to 48K context).
 - Live Tor IP rotation (`🔄 New IP`) and complete browser history wiper.
@@ -339,7 +357,27 @@ cll stop
 
 ---
 
-#### 8. Manual Pages (`man 1`)
+#### 8. System Health & OPSEC Diagnostics (`qwdoctor` / `qw check`)
+
+`qwdoctor` (shorthand `qw check`) runs an automated diagnostic audit across all suite components:
+
+```bash
+qwdoctor
+qw check
+qwdoctor --json
+```
+
+- Verifies Tor SOCKS5h port `9050` connectivity.
+- Performs Tor exit IP leak check against `check.torproject.org`.
+- Checks `llama-server` process status and port `8080` health.
+- Scans and validates local GGUF model files.
+- Checks `cll` port `41625` binding and UI assets.
+- Verifies `.qwignore` active pattern counts and syntax.
+- Checks Python environment and critical dependencies.
+
+---
+
+#### 9. Manual Pages (`man 1`)
 
 Standard UNIX manual pages are provided under `man/man1/` and automatically linked to `~/.local/share/man/man1` by `setup.sh`:
 
@@ -361,6 +399,10 @@ man qwcli
 
 ```bash
 man qwserver
+```
+
+```bash
+man qwdoctor
 ```
 
 | Manual Page | Description |

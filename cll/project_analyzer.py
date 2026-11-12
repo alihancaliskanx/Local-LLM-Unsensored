@@ -37,12 +37,24 @@ def sanitize_slug(name: str) -> str:
 
 
 def scan_project_files(project_path: str) -> List[Dict[str, Any]]:
-    """Recursively scans repository files while pruning ignored directories and binary extensions."""
+    """Recursively scans repository files while pruning ignored directories, binary extensions, and .qwignore patterns."""
     records = []
     abs_root = os.path.abspath(project_path)
 
+    # Load project-level and global .qwignore file patterns
+    file_patterns = []
+    try:
+        from cll.qwignore import parse_qwignore, is_file_ignored
+        file_patterns, _ = parse_qwignore(abs_root)
+    except Exception:
+        is_file_ignored = lambda p, pats, is_dir=False: False
+
     for root, dirs, files in os.walk(abs_root):
-        dirs[:] = [d for d in dirs if d not in IGNORED_DIRS and not d.startswith(".")]
+        dirs[:] = [
+            d for d in dirs
+            if d not in IGNORED_DIRS and not d.startswith(".")
+            and not (file_patterns and is_file_ignored(os.path.relpath(os.path.join(root, d), abs_root), file_patterns, is_dir=True))
+        ]
 
         for fname in sorted(files):
             ext = os.path.splitext(fname)[1].lower()
@@ -51,6 +63,9 @@ def scan_project_files(project_path: str) -> List[Dict[str, Any]]:
 
             full_path = os.path.join(root, fname)
             rel_path = os.path.relpath(full_path, abs_root)
+
+            if file_patterns and is_file_ignored(rel_path, file_patterns, is_dir=False):
+                continue
 
             try:
                 stat = os.stat(full_path)
@@ -228,7 +243,8 @@ def synthesize_final_report(
     all_notes: List[Dict[str, str]],
     inference_fn,
     ctx: int = 32768,
-    reasoning_level: int = 2
+    reasoning_level: int = 2,
+    web_research_context: str = ""
 ) -> str:
     """Aggregates all module notes from /tmp/local-llm and streams the consolidated answer."""
     notes_blocks = []
@@ -243,11 +259,13 @@ def synthesize_final_report(
         "that directly answers the user's inquiry. Use markdown headings, bullet points, and code references."
     )
 
+    extra_web = f"\n\n{web_research_context}" if web_research_context else ""
     final_prompt = (
         f"Project: {project_name}\n"
         f"User Request: {user_prompt}\n\n"
         f"High-Level Repository Structure:\n```\n{tree_text[:4000]}\n```\n\n"
-        f"Accumulated Subsystem Analysis Notes:\n{aggregated_notes}\n\n"
+        f"Accumulated Subsystem Analysis Notes:\n{aggregated_notes}\n"
+        f"{extra_web}\n"
         "Synthesize these findings into the comprehensive final answer for the user."
     )
 
@@ -266,7 +284,8 @@ def explore_and_analyze_project(
     reasoning_level: int = 2,
     base_notes_dir: str = "/tmp/local-llm",
     keep_archive: bool = False,
-    export_dir: Optional[str] = None
+    export_dir: Optional[str] = None,
+    web_research: bool = False
 ) -> str:
     """
     Main orchestration routine:
@@ -356,7 +375,17 @@ def explore_and_analyze_project(
         if sym_cache is not None:
             sym_cache.clear()
 
-    # 5. Final Consolidated Synthesis
+    # 5. Final Consolidated Synthesis with optional anonymous Tor research
+    web_context = ""
+    if web_research:
+        try:
+            from cll.manifest_extractor import extract_manifest_dependencies, fetch_dependency_research
+            deps = extract_manifest_dependencies(abs_path)
+            if deps:
+                web_context = fetch_dependency_research(deps, project_dir=abs_path)
+        except Exception as e:
+            sys.stderr.write(f"[qwfile --web] Notice: Dependency web research skipped: {e}\n")
+
     final_report = synthesize_final_report(
         project_name=project_name,
         user_prompt=user_prompt,
@@ -364,7 +393,8 @@ def explore_and_analyze_project(
         all_notes=all_notes,
         inference_fn=inference_fn,
         ctx=ctx,
-        reasoning_level=reasoning_level
+        reasoning_level=reasoning_level,
+        web_research_context=web_context
     )
 
     final_report_path = os.path.join(project_dir, "final_analysis.md")

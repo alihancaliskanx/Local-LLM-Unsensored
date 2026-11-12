@@ -62,6 +62,8 @@ cll() {
     echo "Stopping CLL server and llama-server..."
     pkill -f 'cll\.server|cll/server\.py|cll_server\.py' 2>/dev/null || true
     pkill -x 'llama-server' 2>/dev/null || true
+    sleep 0.3
+    pkill -9 -x 'llama-server' 2>/dev/null || true
     echo "CLL stopped."
     return 0
   fi
@@ -79,35 +81,30 @@ cll() {
     esac
   done
 
-  if ! ss -ltn | grep -q ":${port} "; then
-    echo "Starting CLL server on port ${port}..."
-    PYTHONPATH="${QWEN_DIR}" python3 -m cll.server --no-browser --port "$port" >/dev/null 2>&1 &
-    local ready=0
-    for _ in {1..30}; do
-      if ss -ltn | grep -q ":${port} "; then
-        ready=1
-        break
+  if ss -ltn | grep -q ":${port} "; then
+    local url="http://127.0.0.1:${port}"
+    echo "CLL is already running at ${url}"
+    echo "Tip: Run 'cll stop' to terminate active instances."
+    if [[ $open_browser -eq 1 ]]; then
+      if command -v xdg-open >/dev/null 2>&1; then
+        xdg-open "$url" >/dev/null 2>&1 &
+      elif [[ -n "${BROWSER:-}" ]]; then
+        "$BROWSER" "$url" >/dev/null 2>&1 &
+      else
+        python3 -m webbrowser "$url" >/dev/null 2>&1 &
       fi
-      sleep 0.2
-    done
-    if [[ $ready -eq 0 ]]; then
-      echo "Error: CLL server failed to start on port ${port}" >&2
-      return 1
     fi
+    return 0
   fi
 
-  local url="http://127.0.0.1:${port}"
-  echo "CLL running at ${url}"
-
-  if [[ $open_browser -eq 1 ]]; then
-    if command -v xdg-open >/dev/null 2>&1; then
-      xdg-open "$url" >/dev/null 2>&1 &
-    elif [[ -n "${BROWSER:-}" ]]; then
-      "$BROWSER" "$url" >/dev/null 2>&1 &
-    else
-      python3 -m webbrowser "$url" >/dev/null 2>&1 &
-    fi
+  local browser_args=()
+  if [[ $open_browser -eq 0 ]]; then
+    browser_args+=("--no-browser")
   fi
+
+  # Run in foreground so Ctrl+C (KeyboardInterrupt) gracefully stops the server.
+  # The user can suspend with Ctrl+Z and type 'bg' if background execution is desired.
+  PYTHONPATH="${QWEN_DIR}" python3 -m cll.server --port "$port" "${browser_args[@]}"
 }
 
 alias qw='qwserver'

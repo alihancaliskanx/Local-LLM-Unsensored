@@ -113,7 +113,7 @@ qwcli() {
 
 _qwfile_usage() {
   cat << 'EOF'
-Usage: qwfile [-c 16|32|48] [-r 0..4] [-f pdf|txt|code] <file_or_url_or_repo> [prompt]
+Usage: qwfile [-c 16|32|48] [-r 0..4] [-f pdf|txt|code] [--web] [--keep] [--export <dir>] <target> [prompt]
 
 Smart file, codebase, and remote repository analysis using local Qwen3-4B.
 Supports local files, fuzzy project paths, remote URLs, and GitHub repos (over Tor).
@@ -122,6 +122,9 @@ Options:
   -c <num>     Context tokens (16 -> 16384, 32 -> 32768 [default], 48 -> 49152)
   -r <0..4>    Reasoning effort (0: off, 1: low, 2: medium [default], 3: high, 4: max)
   -f <format>  File format override (pdf, txt, code).
+  --web        Enable Tor-isolated web research on detected project dependencies.
+  --keep       Preserve persistent notes and reports.
+  --export     Custom export directory for reports.
   -h, --help   Show this help.
 EOF
 }
@@ -136,10 +139,12 @@ qwfile() {
 
 _qwsec_usage() {
   cat << 'EOF'
-Usage: qwsec [-c 16|32|48] [-r 0..4] <file_or_code> [prompt]
-       cat <file> | qwsec [-c 16|32|48] [-r 0..4] [prompt]
+Usage: qwsec [-c 16|32|48] [-r 0..4] [--web] [--offline] <file_or_code> [prompt]
+       cat <file> | qwsec [-c 16|32|48] [-r 0..4] [--web] [--offline] [prompt]
 
 Security audit and vulnerability discovery (CWE/OWASP, memory safety, injection, crypto, logic bugs).
+Use --web to cross-reference live CVE advisories for external dependencies over Tor.
+Use --offline to perform air-gapped security audits using the local CVE knowledge base without network access.
 EOF
 }
 
@@ -158,3 +163,32 @@ qwpipe() {
   fi
   PYTHONPATH="${QWEN_DIR}" python3 -m cll.inference pipe "$@"
 }
+
+qwdoctor() {
+  PYTHONPATH="${QWEN_DIR}" python3 -m cll.doctor "$@"
+}
+
+alias qwcheck='qwdoctor'
+
+_qwhost_usage() {
+  cat << 'EOF'
+Usage: qwhost start <port> [name] [--remote-port 80]
+       qwhost stop [name]
+       qwhost list
+       qwhost backup [--dest <archive_path>]
+
+Tor Onion Service Host & Key Persistence Manager.
+Exposes local ports as permanent .onion v3 services with immutable Ed25519 keys.
+EOF
+}
+
+qwhost() {
+  if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    _qwhost_usage
+    return 0
+  fi
+  PYTHONPATH="${QWEN_DIR}" python3 -m cll.host "$@"
+}
+
+alias qwh='qwhost'
+alias qwonion='qwhost'

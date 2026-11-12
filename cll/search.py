@@ -15,6 +15,7 @@ import subprocess
 import urllib.parse
 from collections import Counter
 from typing import List, Dict, Optional, Tuple
+import xml.etree.ElementTree as ET
 
 try:
     import requests
@@ -123,20 +124,41 @@ def clean_bing_url(raw_url: str) -> str:
     return raw_url
 
 
-def is_result_relevant(query: str, title: str, snippet: str) -> bool:
+COMMERCIAL_SPAM_DOMAINS = {
+    'atomtickets.com', 'atom.com', 'dan.com', 'sedo.com', 'godaddy.com',
+    'ticketmaster.com', 'stubhub.com', 'fandango.com'
+}
+
+COMMERCIAL_SPAM_PATTERNS = [
+    r'\b(?:movie\s*tickets|showtimes|buy\s*tickets|ticketmaster|cinema)\b',
+    r'\b(?:domain\s*marketplace|domains?\s*for\s*sale|buy\s*domain|registrar)\b',
+]
+
+
+def is_result_relevant(query: str, title: str, snippet: str, url: str = "") -> bool:
     """
-    Ensures search results contain at least one meaningful keyword from the query,
-    filtering out unrelated geo-ads (supermarkets, local clinics, etc.) served by Tor exit nodes.
+    Ensures search results contain meaningful keywords from the query and filters
+    out commercial spam (ticket vendors, domain brokers, geo-ads).
     """
+    if url:
+        for d in COMMERCIAL_SPAM_DOMAINS:
+            if d in url.lower():
+                return False
+    text = f"{title} {snippet}".lower()
+    for pat in COMMERCIAL_SPAM_PATTERNS:
+        if re.search(pat, text):
+            if not re.search(r'\b(ticket|movie|domain|cinema)\b', query.lower()):
+                return False
+
     query_words = set(re.findall(r'\b[a-zA-Z0-9_-]{3,}\b', query.lower()))
     stopwords = {
         'the', 'and', 'for', 'with', 'what', 'how', 'official', 'latest', 'current',
-        'recent', 'package', 'packages', 'guide', 'tutorial', 'overview'
+        'recent', 'package', 'packages', 'guide', 'tutorial', 'overview', 'simple',
+        'methods', 'basics', 'basic'
     }
     core_keywords = {w for w in query_words if w not in stopwords}
     if not core_keywords:
         return True
-    text = f"{title} {snippet}".lower()
     return any(kw in text for kw in core_keywords)
 
 
@@ -295,11 +317,16 @@ def fetch_wikipedia_summary(query: str) -> Optional[Dict[str, str]]:
     except Exception:
         pass
 
-    # 2. Try OpenSearch with full query, then fall back to primary keyword
+    # 2. Try OpenSearch with full query, then fall back to primary non-stopword keywords
     candidates = [query]
-    words = [w for w in re.findall(r"\b[a-zA-Z0-9_-]{3,}\b", query)]
+    wiki_stopwords = {
+        'how', 'what', 'why', 'when', 'where', 'who', 'which', 'to', 'the', 'an', 'a',
+        'in', 'on', 'for', 'with', 'simple', 'methods', 'basic', 'mechanics'
+    }
+    words = [w for w in re.findall(r"\b[a-zA-Z0-9_-]{3,}\b", query) if w.lower() not in wiki_stopwords]
     if len(words) > 1:
         candidates.append(" ".join(words[:2]))
+    if words:
         candidates.append(words[0])
 
     for cand in candidates:
@@ -329,6 +356,84 @@ def fetch_wikipedia_summary(query: str) -> Optional[Dict[str, str]]:
             pass
 
     return None
+
+
+def extract_wikipedia_references(wiki_title_or_url: str, limit: int = 3) -> List[Dict[str, str]]:
+    """
+    Extracts primary authoritative citations (DOI, ArXiv, Nature, APS, ScienceDirect, .edu, .gov)
+    from a Wikipedia page's References section strictly over Tor.
+    """
+    title = wiki_title_or_url.replace("https://en.wikipedia.org/wiki/", "").replace(" ", "_")
+    url = f"https://en.wikipedia.org/wiki/{urllib.parse.quote(title)}"
+    headers = {"User-Agent": USER_AGENT}
+    results = []
+    try:
+        r = requests.get(url, proxies=TOR_PROXIES, headers=headers, timeout=12)
+        if r.status_code == 200:
+            soup = BeautifulSoup(r.text, 'html.parser')
+            cites = soup.select('.citation, .reference-text, li[id^="cite_note-"]')
+            seen_urls = set()
+            academic_domains = [
+                'doi.org', 'arxiv.org', 'nature.com', 'sciencedirect.com',
+                'aps.org', 'springer.com', 'jstor.org', '.edu', '.gov', 'nobelprize.org'
+            ]
+            for c in cites:
+                for a in c.find_all('a', href=True):
+                    href = a['href']
+                    if href.startswith('//'):
+                        href = 'https:' + href
+                    if not href.startswith('http'):
+                        continue
+                    if any(d in href for d in academic_domains) and href not in seen_urls:
+                        seen_urls.add(href)
+                        raw_text = c.get_text(' ', strip=True)
+                        clean_text = re.sub(r'^\s*\^?\s*', '', raw_text)
+                        clean_text = re.sub(r'\s+', ' ', clean_text)
+                        link_title = a.get_text(strip=True) or clean_text[:60]
+                        results.append({
+                            "title": f"Primary Source: {link_title}",
+                            "url": href,
+                            "snippet": clean_text[:350],
+                            "engine": "Wikipedia Primary References"
+                        })
+                        if len(results) >= limit:
+                            break
+                if len(results) >= limit:
+                    break
+    except Exception:
+        pass
+    return results
+
+
+def search_arxiv(query: str, limit: int = 3) -> List[Dict[str, str]]:
+    """
+    Queries ArXiv API for peer-reviewed academic preprints strictly over Tor SOCKS5h.
+    """
+    clean_q = re.sub(r'[^\w\s]', ' ', query).strip()
+    words = [w for w in clean_q.split() if len(w) > 2]
+    if not words:
+        return []
+    search_expr = "+AND+".join(words[:4])
+    url = f"http://export.arxiv.org/api/query?search_query=all:{search_expr}&start=0&max_results={limit}"
+    results = []
+    try:
+        r = requests.get(url, proxies=TOR_PROXIES, timeout=10)
+        if r.status_code == 200:
+            root = ET.fromstring(r.text)
+            ns = {'atom': 'http://www.w3.org/2005/Atom'}
+            for entry in root.findall('atom:entry', ns):
+                title = entry.find('atom:title', ns).text.strip().replace('\n', ' ')
+                summary = entry.find('atom:summary', ns).text.strip().replace('\n', ' ')
+                link = entry.find('atom:id', ns).text.strip()
+                results.append({
+                    "title": f"ArXiv Paper: {title}",
+                    "url": link,
+                    "snippet": summary[:350],
+                    "engine": "ArXiv API (Tor)"
+                })
+    except Exception:
+        pass
+    return results
 
 
 _AHMIA_TOKEN = ("c37337", "6dc8c0")
@@ -474,14 +579,42 @@ def search_ahmia_onion(query: str, limit: int = 5) -> List[Dict[str, str]]:
     return []
 
 
-def execute_search_cascade(query: str, limit: int = 5) -> Tuple[List[Dict[str, str]], str]:
+DECOY_QUERIES = [
+    "linux epoll socket nonblocking IO",
+    "sqlite btree storage page format",
+    "python typing abstract base class protocol",
+    "rust tokio async mpsc channel",
+    "zlib deflate huffman coding algorithm",
+    "posix semaphore shared memory synchronization",
+    "tls 1.3 handshake cryptographic suites"
+]
+
+
+def send_chaff_query():
+    """Sends a randomized decoy query over Tor to introduce timing and packet size entropy."""
+    import random
+    decoy = random.choice(DECOY_QUERIES)
+    sys.stderr.write(f"[OPSEC CHAFF] Emitting decoy query over Tor: '{decoy}'...\n")
+    sys.stderr.flush()
+    try:
+        search_bing(decoy, limit=1)
+    except Exception:
+        pass
+    time.sleep(random.uniform(0.3, 0.7))
+
+
+def execute_search_cascade(query: str, limit: int = 5, with_chaff: bool = False) -> Tuple[List[Dict[str, str]], str]:
     """
     Executes resilient privacy search over Tor SOCKS5h.
     Tries DuckDuckGo HTML first; if blocked by anomaly/CAPTCHA, falls back to Bing.
     Auto-refreshes Tor circuit if a dead circuit is encountered.
     Enriches with GitHub repository search and Wikipedia summary.
+    If with_chaff=True, injects decoy traffic before the real query.
     """
     enforce_tor_gatekeeper()
+
+    if with_chaff:
+        send_chaff_query()
 
     engine_used = "DuckDuckGo"
     results = search_duckduckgo_html(query, limit=limit)
@@ -510,20 +643,37 @@ def execute_search_cascade(query: str, limit: int = 5) -> Tuple[List[Dict[str, s
                 condensed_q = " ".join(words[:3])
                 results = search_bing(condensed_q, limit=limit)
 
-    # Enrich with GitHub developer repositories over Tor if query targets software/hardware/protocols
-    gh_results = search_github_repositories(query, limit=2)
-    if gh_results:
-        existing_urls = {r.get("url") for r in results}
-        for g in gh_results:
-            if g.get("url") not in existing_urls and len(results) < limit:
-                results.append(g)
-                existing_urls.add(g.get("url"))
+    # Enrich with GitHub developer repositories over Tor only if query targets software/hardware/tools/exploits
+    is_dev_query = bool(re.search(r'\b(github|repo|git|code|library|pkg|package|sdk|api|cli|tool|script|exploit|cve|driver|firmware|protocol|implementation)\b', query, re.IGNORECASE))
+    if is_dev_query:
+        gh_results = search_github_repositories(query, limit=2)
+        if gh_results:
+            existing_urls = {r.get("url") for r in results}
+            for g in gh_results:
+                if g.get("url") not in existing_urls and len(results) < limit:
+                    results.append(g)
+                    existing_urls.add(g.get("url"))
 
     wiki = fetch_wikipedia_summary(query)
     if wiki and len(results) < limit:
         existing_urls = {r.get("url") for r in results}
         if wiki.get("url") not in existing_urls:
             results.append(wiki)
+            existing_urls.add(wiki.get("url"))
+            # Extract primary authoritative citations from Wikipedia References
+            for ref in extract_wikipedia_references(wiki.get("url"), limit=2):
+                if ref.get("url") not in existing_urls and len(results) < limit:
+                    results.append(ref)
+                    existing_urls.add(ref.get("url"))
+
+    # Academic ArXiv paper discovery for scientific/technical queries
+    is_academic = bool(re.search(r'\b(physics|quantum|nuclear|fission|fusion|reaction|mechanics|theory|algorithm|cryptography|protocol|biology|chemistry|paper|equation)\b', query, re.IGNORECASE))
+    if is_academic and len(results) < limit:
+        existing_urls = {r.get("url") for r in results}
+        for a in search_arxiv(query, limit=2):
+            if a.get("url") not in existing_urls and len(results) < limit:
+                results.append(a)
+                existing_urls.add(a.get("url"))
 
     return results, engine_used
 
@@ -672,6 +822,7 @@ def main():
     parser.add_argument("--json", action="store_true", help="Output search results in JSON format")
     parser.add_argument("--leak-test", action="store_true", help="Audit Tor circuit and verify IP via check.torproject.org")
     parser.add_argument("--new-circuit", action="store_true", help="Request a new Tor identity/circuit before searching")
+    parser.add_argument("--chaff", "--decoy", action="store_true", help="Emit random decoy queries over Tor for traffic analysis resistance")
 
     args = parser.parse_args()
 
@@ -705,7 +856,7 @@ def main():
         sys.exit(0)
 
     # 3. Search Cascade over Tor
-    results, engine_used = execute_search_cascade(query_str, limit=args.limit)
+    results, engine_used = execute_search_cascade(query_str, limit=args.limit, with_chaff=args.chaff)
 
     if not results:
         sys.stderr.write(

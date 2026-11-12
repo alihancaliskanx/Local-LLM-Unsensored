@@ -27,6 +27,7 @@ _qwfile_completion() {
     '-c[Context tokens in thousands]:context:_qw_common_context_args' \
     '-r[Reasoning effort level (0..4)]:reasoning:_qw_common_reasoning_args' \
     '-f[File format override]:format:(pdf txt code)' \
+    '(--web --search)'{--web,--search}'[Perform Tor-isolated web research on dependencies]' \
     '--keep[Preserve modular notes in /tmp/local-llm/]' \
     '--export[Export final synthesis report to path]:export_file:_files' \
     '(-h --help)'{-h,--help}'[Show usage information]' \
@@ -38,6 +39,8 @@ _qwsec_completion() {
   _arguments -s \
     '-c[Context tokens in thousands]:context:_qw_common_context_args' \
     '-r[Reasoning effort level (0..4)]:reasoning:_qw_common_reasoning_args' \
+    '(--web --search)'{--web,--search}'[Perform Tor-isolated web research on dependencies]' \
+    '--offline[Use local offline CVE advisory cache with zero network requests]' \
     '(-h --help)'{-h,--help}'[Show usage information]' \
     '1:target:_files' \
     '*:prompt:_default'
@@ -79,8 +82,15 @@ _qwsearch_completion() {
     '--json[Output structured JSON results]' \
     '--leak-test[Perform Tor circuit leak and IP check]' \
     '--new-circuit[Request fresh Tor circuit/IP]' \
+    '(--chaff --decoy)'{--chaff,--decoy}'[Emit random decoy queries over Tor for traffic analysis resistance]' \
     '(-h --help)'{-h,--help}'[Show usage information]' \
     '*:query:_default'
+}
+
+_qwdoctor_completion() {
+  _arguments -s \
+    '--json[Output diagnostic results in JSON format]' \
+    '(-h --help)'{-h,--help}'[Show usage information]'
 }
 
 # Register completions if running in Zsh with compsys enabled
@@ -92,4 +102,6 @@ if [[ -n "${ZSH_VERSION:-}" ]] && (( $+functions[compdef] )); then
   compdef _qwcli_completion qws
   compdef _qwserver_completion qwserver
   compdef _qwsearch_completion qwsearch
+  compdef _qwdoctor_completion qwdoctor
+  compdef _qwdoctor_completion qwcheck
 fi

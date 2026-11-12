@@ -1,0 +1,43 @@
+.TH QWDOCTOR 1 "November 2026" "Local-LLM-Unsensored" "User Commands"
+.SH NAME
+qwdoctor \- diagnostic health check, Tor connectivity, and OPSEC verification tool
+.SH SYNOPSIS
+.B qwdoctor
+[\fB\-\-json\fR]
+.PP
+.B qw check
+.SH DESCRIPTION
+.B qwdoctor
+(or
+.BR "qw check" )
+is a system diagnostic and OPSEC verification tool that validates the operational health of all Local-LLM-Unsensored services and security boundaries.
+.PP
+It verifies:
+.IP \(bu 2
+Tor SOCKS5h daemon connectivity on \fI127.0.0.1:9050\fR.
+.IP \(bu 2
+Remote DNS and exit IP masking via \fIcheck.torproject.org\fR to guarantee zero clearnet leaks.
+.IP \(bu 2
+Local \fBllama\-server\fR daemon responsiveness on port 8080.
+.IP \(bu 2
+GGUF model file availability and storage sizes.
+.IP \(bu 2
+CLL Web Gateway binding status on port 41625.
+.IP \(bu 2
+Active \fB.qwignore\fR and \fI~/.config/qw/ignore\fR rule integrity.
+.IP \(bu 2
+System Python runtime dependencies (\fIfastapi\fR, \fIuvicorn\fR, \fIrequests\fR, \fIbs4\fR).
+.SH OPTIONS
+.TP
+.B \-\-json
+Output diagnostic results as a machine-readable JSON array.
+.TP
+.B \-h\fR, \fB\-\-help
+Display command synopsis and exit.
+.SH SEE ALSO
+.BR qwsearch (1),
+.BR qwfile (1),
+.BR qwsec (1),
+.BR qwserver (1)
+.SH AUTHORS
+Local-LLM-Unsensored maintainers and contributors.

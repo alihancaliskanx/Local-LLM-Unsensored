@@ -1,0 +1,34 @@
+# .qwignore - Local LLM & Qw CLI Exclusion Configuration
+#
+# Rules in this file prevent confidential files from being ingested into LLM context,
+# and prevent proprietary packages/internal libraries from being searched over Tor.
+
+# ==============================================================================
+# 1. Package Directives (Zero-Leak OPSEC for --web / Tor searches)
+# ==============================================================================
+# Use 'pkg:<pattern>' or 'dep:<pattern>' to suppress external web searches for
+# proprietary, corporate, or internal dependencies extracted from manifests or imports.
+pkg:corp-*
+pkg:internal-*
+pkg:private-auth-sdk
+dep:enterprise-crypto
+
+# ==============================================================================
+# 2. File & Directory Directives (Prevent Ingestion into LLM Context)
+# ==============================================================================
+# Credentials, secret keys, certificates, and private tokens
+secrets/
+credentials.json
+*.pem
+*.key
+*.pfx
+*.pcap
+*.env*
+
+# Proprietary binary or data dumps
+data/confidential/*
+private_dataset/
+
+# Large local dumps or generated benchmarks
+benchmarks/runs/
+local_backups/
