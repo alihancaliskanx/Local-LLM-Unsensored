@@ -1,0 +1,50 @@
+.TH QWSEC 1 "November 2026" "Local-LLM-Unsensored" "User Commands"
+.SH NAME
+qwsec \- security audit, vulnerability discovery, and exploit analysis using local Qwen3-4B
+.SH SYNOPSIS
+.B qwsec
+[\fB\-c\fR \fI16\fR|\fI32\fR|\fI48\fR]
+[\fB\-r\fR \fI0..4\fR]
+\fItarget\fR
+[\fIprompt\fR...]
+.PP
+.I command
+|
+.B qwsec
+[\fB\-c\fR \fI16\fR|\fI32\fR|\fI48\fR]
+[\fB\-r\fR \fI0..4\fR]
+[\fIprompt\fR...]
+.SH DESCRIPTION
+.B qwsec
+is a specialized security audit tool that inspects source code, decompiled binaries, configs, or piped standard input for vulnerabilities, logic bugs, cryptographic weaknesses, and injection points.
+.PP
+The model operates under an uncensored security audit profile, analyzing code for OWASP Top 10, CWE categories, memory safety violations (use-after-free, buffer overflows, race conditions), and improper authentication mechanisms without safety refusals.
+.SH OPTIONS
+.TP
+.BI \-c " tokens"
+Set context window size (16, 32, or 48 thousand tokens). Default is 32.
+.TP
+.BI \-r " level"
+Set reasoning effort level (\fI0\fR to \fI4\fR). Default is 2. Higher levels (3 or 4) are recommended for deep vulnerability discovery.
+.SH EXAMPLES
+.PP
+Audit a C source file for memory safety and race conditions:
+.RS
+.nf
+qwsec src/driver.c "Identify buffer overflows, format string bugs, and logic flaws"
+.fi
+.RE
+.PP
+Audit piped configuration through stdin:
+.RS
+.nf
+sudo cat /etc/ssh/sshd_config | qwsec "Audit SSH daemon security posture"
+.fi
+.RE
+.SH SEE ALSO
+.BR qwfile (1),
+.BR qwcli (1),
+.BR qwpipe (1),
+.BR qwserver (1)
+.SH AUTHORS
+Local-LLM-Unsensored maintainers and contributors.

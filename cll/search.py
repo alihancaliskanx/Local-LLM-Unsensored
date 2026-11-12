@@ -191,7 +191,6 @@ def search_bing(query: str, limit: int = 5) -> List[Dict[str, str]]:
         "User-Agent": USER_AGENT,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
-        "Cookie": "SRCHHPGUSR=ADLT=DEMO&NRSLT=20&SRCHLANG=en; _EDGE_S=mkt=en-us&ui-lang=en-us"
     }
 
     try:
@@ -229,6 +228,52 @@ def search_bing(query: str, limit: int = 5) -> List[Dict[str, str]]:
         return []
 
 
+def search_github_repositories(query: str, limit: int = 3) -> List[Dict[str, str]]:
+    """Queries GitHub Search API strictly over Tor SOCKS5h for software projects and specifications."""
+    clean_q = re.sub(r"[?!.,;:]+", " ", query).strip()
+    words = [w for w in re.findall(r"\b[a-zA-Z0-9_-]{2,}\b", clean_q)]
+    if not words:
+        return []
+
+    candidates = [" ".join(words[:3])]
+    clean_words = [re.sub(r"^(?:AP_|lib|py)", "", w, flags=re.IGNORECASE) for w in words]
+    if len(clean_words) > 1:
+        candidates.append(" ".join(clean_words[:2]))
+    if words[0] not in candidates:
+        candidates.append(words[0])
+
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": "application/vnd.github.v3+json"
+    }
+
+    for cand in candidates:
+        url = f"https://api.github.com/search/repositories?q={urllib.parse.quote_plus(cand)}&sort=stars&order=desc"
+        try:
+            r = requests.get(url, proxies=TOR_PROXIES, headers=headers, timeout=8)
+            if r.status_code == 200:
+                items = r.json().get("items", [])
+                if items:
+                    results = []
+                    for item in items[:limit]:
+                        full_name = item.get("full_name", "")
+                        stars = item.get("stargazers_count", 0)
+                        desc = item.get("description", "") or ""
+                        html_url = item.get("html_url", "")
+                        if full_name and html_url:
+                            results.append({
+                                "title": f"GitHub: {full_name} ({stars}★)",
+                                "url": html_url,
+                                "snippet": desc,
+                                "engine": "GitHub API (Tor)"
+                            })
+                    return results
+        except Exception:
+            pass
+
+    return []
+
+
 def fetch_wikipedia_summary(query: str) -> Optional[Dict[str, str]]:
     """Retrieves Wikipedia encyclopedic context strictly over Tor SOCKS5h using REST API with OpenSearch fallback."""
     headers = {"User-Agent": USER_AGENT}
@@ -251,28 +296,39 @@ def fetch_wikipedia_summary(query: str) -> Optional[Dict[str, str]]:
     except Exception:
         pass
 
-    # 2. Fallback to OpenSearch to discover canonical article name
-    opensearch_url = f"https://en.wikipedia.org/w/api.php?action=opensearch&search={urllib.parse.quote_plus(query)}&limit=1&format=json"
-    try:
-        r = requests.get(opensearch_url, proxies=TOR_PROXIES, headers=headers, timeout=8)
-        if r.status_code == 200:
-            data = r.json()
-            if len(data) >= 4 and data[1]:
-                canonical_title = data[1][0]
-                canon_clean = canonical_title.replace(" ", "_")
-                r2 = requests.get(f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(canon_clean)}", proxies=TOR_PROXIES, headers=headers, timeout=8)
-                if r2.status_code == 200:
-                    d2 = r2.json()
-                    extract2 = d2.get("extract", "")
-                    if extract2:
-                        return {
-                            "title": f"Wikipedia: {d2.get('title')}",
-                            "url": d2.get("content_urls", {}).get("desktop", {}).get("page", f"https://en.wikipedia.org/wiki/{canon_clean}"),
-                            "snippet": extract2,
-                            "engine": "Wikipedia"
-                        }
-    except Exception:
-        pass
+    # 2. Try OpenSearch with full query, then fall back to primary keyword
+    candidates = [query]
+    words = [w for w in re.findall(r"\b[a-zA-Z0-9_-]{3,}\b", query)]
+    if len(words) > 1:
+        candidates.append(" ".join(words[:2]))
+        candidates.append(words[0])
+
+    for cand in candidates:
+        opensearch_url = f"https://en.wikipedia.org/w/api.php?action=opensearch&search={urllib.parse.quote_plus(cand)}&limit=1&format=json"
+        try:
+            r = requests.get(opensearch_url, proxies=TOR_PROXIES, headers=headers, timeout=8)
+            if r.status_code == 200:
+                data = r.json()
+                if len(data) >= 4 and data[1]:
+                    canonical_title = data[1][0]
+                    canon_clean = canonical_title.replace(" ", "_")
+                    r2 = requests.get(
+                        f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(canon_clean)}",
+                        proxies=TOR_PROXIES, headers=headers, timeout=8
+                    )
+                    if r2.status_code == 200:
+                        d2 = r2.json()
+                        extract2 = d2.get("extract", "")
+                        if extract2:
+                            return {
+                                "title": f"Wikipedia: {d2.get('title')}",
+                                "url": d2.get("content_urls", {}).get("desktop", {}).get("page", f"https://en.wikipedia.org/wiki/{canon_clean}"),
+                                "snippet": extract2,
+                                "engine": "Wikipedia"
+                            }
+        except Exception:
+            pass
+
     return None
 
 
@@ -424,7 +480,7 @@ def execute_search_cascade(query: str, limit: int = 5) -> Tuple[List[Dict[str, s
     Executes resilient privacy search over Tor SOCKS5h.
     Tries DuckDuckGo HTML first; if blocked by anomaly/CAPTCHA, falls back to Bing.
     Auto-refreshes Tor circuit if a dead circuit is encountered.
-    Enriches with Wikipedia summary if available.
+    Enriches with GitHub repository search and Wikipedia summary.
     """
     enforce_tor_gatekeeper()
 
@@ -435,15 +491,40 @@ def execute_search_cascade(query: str, limit: int = 5) -> Tuple[List[Dict[str, s
         engine_used = "Bing (Tor Fallback)"
         results = search_bing(query, limit=limit)
 
+    # Multi-term query condensation fallback if dense technical query yielded no results
+    words = [w for w in re.findall(r"\b[a-zA-Z0-9_-]{2,}\b", query) if w.lower() not in (
+        'the', 'and', 'for', 'with', 'what', 'how', 'official', 'latest', 'current',
+        'recent', 'architecture', 'mechanism', 'overview', 'details'
+    )]
+    if not results and len(words) > 2:
+        condensed_q = " ".join(words[:3])
+        results = search_bing(condensed_q, limit=limit)
+        if results:
+            engine_used = "Bing (Condensed Query)"
+
     if not results:
         # Automatic recovery for expired/stale Tor circuits
         if rotate_tor_circuit():
             engine_used = "Bing (Circuit Refreshed)"
             results = search_bing(query, limit=limit)
+            if not results and len(words) > 2:
+                condensed_q = " ".join(words[:3])
+                results = search_bing(condensed_q, limit=limit)
+
+    # Enrich with GitHub developer repositories over Tor if query targets software/hardware/protocols
+    gh_results = search_github_repositories(query, limit=2)
+    if gh_results:
+        existing_urls = {r.get("url") for r in results}
+        for g in gh_results:
+            if g.get("url") not in existing_urls and len(results) < limit:
+                results.append(g)
+                existing_urls.add(g.get("url"))
 
     wiki = fetch_wikipedia_summary(query)
     if wiki and len(results) < limit:
-        results.append(wiki)
+        existing_urls = {r.get("url") for r in results}
+        if wiki.get("url") not in existing_urls:
+            results.append(wiki)
 
     return results, engine_used
 
@@ -464,7 +545,7 @@ def format_markdown_context(query: str, results: List[Dict[str, str]], engine: s
 
 
 def synthesize_with_llm(query: str, context: str, reasoning_level: int = 2) -> None:
-    """Invokes local qwen-local CLI to synthesize an answer from the Tor search context."""
+    """Invokes active llama-server (if running) or local qwen-local CLI to synthesize an answer from the Tor search context."""
     full_prompt = (
         "You are an expert technical assistant with access to real-time web search results.\n"
         "Use the provided web search context to answer the user's question directly, accurately, and thoroughly.\n"
@@ -475,6 +556,49 @@ def synthesize_with_llm(query: str, context: str, reasoning_level: int = 2) -> N
         f"Web Search Results:\n{context}\n"
     )
 
+    # 1. Try active llama-server first (instant response, live streaming, zero GPU conflict)
+    try:
+        import urllib.request
+        server_url = "http://127.0.0.1:8080/v1/chat/completions"
+        req_payload = {
+            "messages": [
+                {"role": "user", "content": full_prompt}
+            ],
+            "temperature": 0.2,
+            "stream": True
+        }
+        req = urllib.request.Request(
+            server_url,
+            data=json.dumps(req_payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            if resp.status == 200:
+                got_tokens = False
+                for raw_line in resp:
+                    line = raw_line.decode("utf-8", errors="ignore").strip()
+                    if line.startswith("data: "):
+                        data_str = line[6:].strip()
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data_str)
+                            delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                            if delta:
+                                sys.stdout.write(delta)
+                                sys.stdout.flush()
+                                got_tokens = True
+                        except Exception:
+                            pass
+                if got_tokens:
+                    sys.stdout.write("\n")
+                    sys.stdout.flush()
+                    return
+    except Exception:
+        pass
+
+    # 2. Fall back to qwen-local CLI if llama-server is offline
     reasoning_flags = {
         0: ["--reasoning", "off"],
         1: ["--reasoning", "on", "--reasoning-effort", "low"],
@@ -507,15 +631,19 @@ def synthesize_with_llm(query: str, context: str, reasoning_level: int = 2) -> N
     env["RULES_PATH"] = "/dev/null"
 
     try:
-        subprocess.run(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        with open(tmp_name, "r", errors="ignore") as f:
-            content = f.read()
+        proc = subprocess.run(cmd, env=env, capture_output=True, text=True)
+        content = ""
+        if os.path.exists(tmp_name):
+            with open(tmp_name, "r", errors="ignore") as f:
+                content = f.read()
 
         if "Assistant:" in content:
             response = content.split("Assistant:", 1)[1].strip()
             print(response)
         elif content.strip():
             print(content.strip())
+        elif proc.returncode != 0 and proc.stderr:
+            sys.stderr.write(f"[qwsearch error] {proc.stderr.strip()}\n")
         else:
             sys.stderr.write("[qwsearch] No synthesis output generated by model.\n")
     except Exception as e:

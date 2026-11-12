@@ -1,0 +1,38 @@
+.TH QWSERVER 1 "November 2026" "Local-LLM-Unsensored" "User Commands"
+.SH NAME
+qwserver \- start high-concurrency local llama-server daemon for Qwen3-4B
+.SH SYNOPSIS
+.B qwserver
+[\fB\-c\fR \fI16\fR|\fI32\fR|\fI48\fR]
+[\fB\-p\fR \fIport\fR]
+[\fB\-r\fR \fI0..4\fR]
+[\fIextra flags...\fR]
+.SH DESCRIPTION
+.B qwserver
+spawns the high-throughput \fBllama\-server\fR background process, exposing an OpenAI-compatible HTTP API and Server-Sent Events (SSE) streaming endpoint.
+All terminal tools (\fBqwfile\fR, \fBqwsec\fR, \fBqwpipe\fR, \fBqwcli\fR) detect and route queries through this server automatically when active.
+.SH OPTIONS
+.TP
+.BI \-c " tokens"
+Allocate context window size (16, 32, or 48 thousand tokens). Default is 32.
+.TP
+.BI \-p " port"
+TCP port to bind the HTTP server to. Default is 8080.
+.TP
+.BI \-r " level"
+Set reasoning effort profile (\fI0\fR to \fI4\fR). Default is 2.
+.SH EXAMPLES
+.PP
+Start the server with 48k context on port 8080:
+.RS
+.nf
+qwserver \-c 48 \-p 8080
+.fi
+.RE
+.SH SEE ALSO
+.BR qwfile (1),
+.BR qwcli (1),
+.BR qwsec (1),
+.BR qwpipe (1)
+.SH AUTHORS
+Local-LLM-Unsensored maintainers and contributors.

@@ -1,0 +1,42 @@
+.TH QWPIPE 1 "November 2026" "Local-LLM-Unsensored" "User Commands"
+.SH NAME
+qwpipe \- process standard input streams with local Qwen3-4B
+.SH SYNOPSIS
+.I command
+|
+.B qwpipe
+[\fB\-c\fR \fI16\fR|\fI32\fR|\fI48\fR]
+[\fB\-r\fR \fI0..4\fR]
+[\fIprompt\fR...]
+.SH DESCRIPTION
+.B qwpipe
+reads arbitrary piped data from standard input (such as shell command outputs, build logs, diffs, network traces, or system journal dumps) and feeds it into the local Qwen3-4B model with user instructions.
+.SH OPTIONS
+.TP
+.BI \-c " tokens"
+Set context window size (16, 32, or 48 thousand tokens). Default is 32.
+.TP
+.BI \-r " level"
+Set reasoning effort level (\fI0\fR to \fI4\fR). Default is 2.
+.SH EXAMPLES
+.PP
+Analyze compilation errors from a build log:
+.RS
+.nf
+make 2>&1 | qwpipe "Explain the root cause of the build failure and give a fix"
+.fi
+.RE
+.PP
+Analyze a git diff before committing:
+.RS
+.nf
+git diff | qwpipe "Review this patch for bugs and suggest a clean commit message"
+.fi
+.RE
+.SH SEE ALSO
+.BR qwfile (1),
+.BR qwcli (1),
+.BR qwsec (1),
+.BR qwserver (1)
+.SH AUTHORS
+Local-LLM-Unsensored maintainers and contributors.

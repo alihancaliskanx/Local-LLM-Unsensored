@@ -1,0 +1,56 @@
+.TH QWCLI 1 "November 2026" "Local-LLM-Unsensored" "User Commands"
+.SH NAME
+qwcli \- interactive chat and single-turn query terminal runner for local Qwen3-4B
+.SH SYNOPSIS
+.B qwcli
+[\fB\-c\fR \fI16\fR|\fI32\fR|\fI48\fR]
+[\fB\-r\fR \fI0..4\fR]
+[\fB\-s\fR]
+[\fB\-p\fR \fIprompt\fR]
+[\fB\-\-rules\fR|\fB\-\-no\-rules\fR]
+[\fIextra flags...\fR]
+.SH DESCRIPTION
+.B qwcli
+launches an interactive conversational terminal session or single-turn query powered by local Qwen3-4B.
+It supports switching system prompt rules, reasoning levels, context allocations, and single-turn direct query execution.
+.SH OPTIONS
+.TP
+.BI \-c " tokens"
+Set context window size (16, 32, or 48 thousand tokens). Default is 32.
+.TP
+.BI \-r " level"
+Set reasoning effort level (\fI0\fR to \fI4\fR). Default is 2.
+.TP
+.B \-s
+Single-turn execution mode: evaluates the prompt, streams the answer, and exits cleanly.
+.TP
+.BI \-p " prompt"
+Initial prompt text to start the session or execute with \fB\-s\fR.
+.TP
+.B \-\-rules
+Enforce system instructions and security sandbox guidelines from \fIprompts/cli_rules.md\fR.
+.TP
+.B \-\-no\-rules
+Disable system rules for unrestricted, raw model responses.
+.SH EXAMPLES
+.PP
+Launch interactive session with high reasoning:
+.RS
+.nf
+qwcli \-r 3
+.fi
+.RE
+.PP
+Run a fast single-turn query from the command line:
+.RS
+.nf
+qwcli \-s "What is the differences between epoll and io_uring?"
+.fi
+.RE
+.SH SEE ALSO
+.BR qwfile (1),
+.BR qwsec (1),
+.BR qwpipe (1),
+.BR qwserver (1)
+.SH AUTHORS
+Local-LLM-Unsensored maintainers and contributors.

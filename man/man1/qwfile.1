@@ -1,0 +1,183 @@
+.TH QWFILE 1 "November 2026" "Local-LLM-Unsensored" "User Commands"
+.SH NAME
+qwfile \- smart file, remote URL, and hierarchical codebase analyzer using local Qwen3-4B
+.SH SYNOPSIS
+.B qwfile
+[\fB\-c\fR \fI16\fR|\fI32\fR|\fI48\fR]
+[\fB\-r\fR \fI0..4\fR]
+[\fB\-f\fR \fIpdf\fR|\fItxt\fR|\fIcode\fR]
+[\fB\-\-keep\fR]
+[\fB\-\-export\fR \fIpath\fR]
+\fItarget\fR
+[\fIprompt\fR...]
+.SH DESCRIPTION
+.B qwfile
+is an intelligent terminal inspection and analysis tool powered by a locally hosted, uncensored Qwen3-4B model.
+It accepts local files, remote HTTP/HTTPS URLs, GitHub repositories, fuzzy project aliases, or entire source directory trees.
+.PP
+Depending on whether
+.I target
+is a single file, a remote resource, or a codebase directory,
+.B qwfile
+automatically selects the optimal processing strategy:
+.TP
+.B Single File Analysis
+Extracts source code, plain text, or document content (including automated text extraction for PDF files via \fBpypdf\fR, \fBpdfplumber\fR, or \fBpdftotext\fR).
+The file content is formatted with syntax fences and passed to the model alongside the user prompt.
+.TP
+.B Hierarchical Codebase Analyzer
+When
+.I target
+is a directory or a recognized project,
+.B qwfile
+initiates a structured multi-pass codebase inspection:
+.RS
+.IP 1. 3
+.B Directory Mapping:
+Scans the repository structure using recursive directory listing (\fBtree\fR or \fBls\fR) while respecting standard exclusion filters (\fB.git\fR, \fBnode_modules\fR, \fBtarget\fR, \fB__pycache__\fR).
+.IP 2. 3
+.B Modular Decomposition:
+Splits the repository into logical module chunks bounded by context limits (at most 24,000 characters per chunk).
+.IP 3. 3
+.B Incremental Note Synthesis:
+Iteratively inspects each module chunk, extracting architecture patterns, component definitions, and potential vulnerabilities.
+Notes are written directly to disk under \fI/tmp/local\-llm/<project>/notes/module_XX.md\fR.
+.IP 4. 3
+.B Holistic Synthesis:
+Aggregates all modular notes into a cohesive final architectural analysis and streams the output directly to the terminal.
+Temporary notes are automatically deleted upon completion unless \fB\-\-keep\fR is specified.
+.RE
+.TP
+.B In\-Memory Dependency Symbol Resolver
+Prior to analyzing source code files (C/C++ and Python),
+.B qwfile
+parses top-level \fB#include\fR and \fBimport\fR statements.
+Signatures of imported functions, classes, structs, and variables are extracted into a volatile RAM symbol cache (\fBSymbolCache\fR).
+Relevance filtering ensures only symbols actually referenced in the target code are injected into the prompt.
+The in-memory cache is fully cleared and garbage-collected once inference concludes, preventing memory accumulation.
+.TP
+.B Smart Target Resolution
+If
+.I target
+does not exist in the current working directory,
+.B qwfile
+searches active development environments (such as \fI~/Projects\fR, \fI~/Code\fR, or \fI~/src\fR) to resolve fuzzy project names (e.g., \fBmyproject\fR maps to \fB~/Projects/myproject\fR).
+Remote Git URLs or shorthand identifiers (e.g., \fBgh:owner/repo\fR) are cloned into temporary storage (with automatic \fBtorsocks\fR routing if Tor is active).
+.TP
+.B Hybrid Inference Engine
+If a local \fBllama\-server\fR is running (default: \fIhttp://127.0.0.1:8080\fR),
+.B qwfile
+streams tokens via Server\-Sent Events (SSE) through direct HTTP requests.
+If the server is offline or busy, it seamlessly falls back to the standalone \fBllama\-cli\fR executable.
+.SH OPTIONS
+.TP
+.BI \-c " tokens"
+Set context window size in thousands of tokens.
+Accepted values:
+.RS
+.TP
+.B 16
+16,384 tokens (~12k words). Fast inference, lowest VRAM footprint.
+.TP
+.B 32
+32,768 tokens (~24k words). Default balanced profile.
+.TP
+.B 48
+49,152 tokens (~36k words). Maximum context for extensive repositories.
+.RE
+.TP
+.BI \-r " level"
+Set reasoning effort level (\fI0\fR to \fI4\fR):
+.RS
+.TP
+.B 0
+Reasoning off (direct output, fastest response).
+.TP
+.B 1
+Low reasoning (concise thinking phase).
+.TP
+.B 2
+Medium reasoning (default balanced thinking).
+.TP
+.B 3
+High reasoning (thorough step-by-step analytical thinking).
+.TP
+.B 4
+Maximum reasoning (exhaustive chain of thought for deep audits).
+.RE
+.TP
+.BI \-f " format"
+Override automatic format detection.
+Supported formats: \fBpdf\fR, \fBtxt\fR, \fBcode\fR.
+.TP
+.B \-\-keep
+Preserve intermediate modular notes generated under \fI/tmp/local\-llm/<project>/notes/\fR instead of purging them upon completion.
+.TP
+.BI \-\-export " path"
+Write the final synthesis report to the specified markdown file path in addition to displaying it in the terminal.
+.TP
+.B \-h\fR, \fB\-\-help
+Display command synopsis and exit.
+.SH ENVIRONMENT
+.TP
+.B QWEN_DIR
+Path to the Local-LLM-Unsensored repository.
+Defaults to the location where the suite was installed.
+.TP
+.B QWEN_PORT
+HTTP port for the local \fBllama\-server\fR daemon.
+Defaults to \fB8080\fR.
+.TP
+.B CTX
+Manual token context size override passed to backend binaries.
+.SH FILES
+.TP
+.I /tmp/local\-llm/<project>/
+Temporary workspace directory used by the Hierarchical Codebase Analyzer for chunking and synthesis notes.
+.TP
+.I prompts/cli_rules.md
+System instructions and tool definitions loaded during CLI queries.
+.SH EXAMPLES
+.PP
+Analyze a single source file with default parameters:
+.RS
+.nf
+qwfile cll/inference.py "Explain the streaming inference workflow"
+.fi
+.RE
+.PP
+Perform a deep architecture audit on a local directory with maximum reasoning:
+.RS
+.nf
+qwfile \-r 4 \-c 48 src/ "Analyze subsystem communication and failure modes"
+.fi
+.RE
+.PP
+Inspect a fuzzy-resolved codebase and export findings while keeping intermediate notes:
+.RS
+.nf
+qwfile \-\-keep \-\-export /tmp/audit.md src/ "List all safety failsafes"
+.fi
+.RE
+.PP
+Analyze a remote PDF specification without downloading it manually:
+.RS
+.nf
+qwfile \-f pdf https://example.com/datasheet.pdf "Summarize bus interface specs"
+.fi
+.RE
+.PP
+Inspect a remote GitHub repository over Tor:
+.RS
+.nf
+qwfile gh:torvalds/subsurface-for-dirk "Explain dive profile calculation"
+.fi
+.RE
+.SH SEE ALSO
+.BR qwcli (1),
+.BR qwsec (1),
+.BR qwpipe (1),
+.BR qwserver (1),
+.BR qwsearch (1)
+.SH AUTHORS
+Local-LLM-Unsensored maintainers and contributors.

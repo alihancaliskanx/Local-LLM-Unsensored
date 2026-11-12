@@ -13,3 +13,4 @@ export QWEN_DIR
 source "${QWEN_DIR}/shell/core.zsh"
 source "${QWEN_DIR}/shell/cli.zsh"
 source "${QWEN_DIR}/shell/web.zsh"
+source "${QWEN_DIR}/shell/completion.zsh"

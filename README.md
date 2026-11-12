@@ -59,15 +59,21 @@ When running `Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf` (~2.5 GB
 | `scripts/run-server.sh` | Launches `llama-server` on `127.0.0.1:8080` |
 | `scripts/run-cli.sh` | Launches interactive or single-turn chat via `llama-cli` (loads `prompts/cli_rules.md`) |
 | `scripts/pre-commit` | Git pre-commit hook scanning diffs for secrets and security flaws via active server or CLI |
+| `cll/inference.py` | Unified terminal inference engine routing CLI commands to active server HTTP or CLI fallback |
+| `cll/project_analyzer.py` | Hierarchical codebase explorer & chunked module analyst with `/tmp/local-llm/` note-taking |
+| `cll/symbol_resolver.py` | In-memory C/C++ `#include` and Python `import` symbol table resolver with relevance filtering |
 | `cll/server.py` | Chat Local LLM (CLL) FastAPI gateway (`127.0.0.1:41625`) with CSRF guard and non-blocking streaming |
 | `cll/search.py` | Privacy-preserving, Tor-only web & `.onion` search engine with Fail-Closed OPSEC |
 | `cll/page_reader.py` | Safe, Tor-only webpage, `.onion`, and GitHub/GitLab raw README extractor |
 | `cll/security.py` | Multi-layer prompt injection defense and escaped XML untrusted-data sandboxing |
 | `cll/prompts.py` | System prompt templates for OSINT/dark web research, standard synthesis, and query planning |
+| `cll_server.py` | Compatibility shim delegating to `cll.server` |
+| `qwsearch.py` | Compatibility shim delegating to `cll.search` |
 | `prompts/cli_rules.md` | System prompt rules configuring terminal `llama-cli` for direct developer responses |
 | `web/cll_shell.html` | CLL top control bar (power toggle, 4K–48K token selector, Tor status/IP rotation, storage wipe) |
 | `web/llama-ui/` | Embedded upstream `llama-ui` SvelteKit static bundle |
-| `tests/test_suite.py` | Automated unit test suite covering sandbox escaping, token stripping, CSRF checks, and search filters |
+| `man/man1/` | Section 1 UNIX manual pages (`qwfile.1`, `qwsec.1`, `qwpipe.1`, `qwcli.1`, `qwserver.1`) |
+| `tests/test_suite.py` | Automated unit test suite covering symbol resolution, project analyzer, sandbox escaping, and CSRF |
 | `.gitignore` | Excludes `*.gguf` model weights, partial downloads, Python bytecode, and runtime logs |
 
 ---
@@ -147,64 +153,223 @@ Load the helper functions into your shell profile (`~/.zshrc`):
 [[ -f "$HOME/Local-LLM-Unsensored/qwen.zsh" ]] && source "$HOME/Local-LLM-Unsensored/qwen.zsh"
 ```
 
-The shell integration provides commands with automatic context scaling, reasoning effort control, and output filtering:
+The shell integration provides high-performance developer commands with automatic context scaling, reasoning effort control, Tor privacy, and in-memory symbol resolution:
 
-| Command | Description | Example |
-| :--- | :--- | :--- |
-| `cll` | Launches Chat Local LLM Web UI (`127.0.0.1:41625`) | `cll` / `cll stop` |
-| `qwcli` (`qwc`) | Terminal chat or single-turn query (`-s`) | `qwcli -c 32 -r 2 -s -p "Explain recursion"` |
-| `qws` | Short alias for single-turn query (`qwcli -s -p`) | `qws "What is Rayleigh scattering?"` |
-| `qwsearch` (`qwsr`) | Tor-isolated web search with local Qwen synthesis | `qwsearch "Arch Linux latest changes"` |
-| `qwfile` | Document & code analyzer (supports `.pdf`, `.txt`, code, >128 KB files) | `qwfile -c 32 -r 3 qwen-local "Analyze this script"` |
-| `qwsec` | Security audit and CWE/OWASP vulnerability scanner | `qwsec cll/server.py` |
-| `qwpipe` | Pipe processor for shell stdout/stderr | `cat build.log \| qwpipe -c 32 "Find root cause"` |
-| `qwserver` (`qw`) | Launches server with context, port, and reasoning | `qwserver -c 32 -p 8080 -r 2` |
-| `qstop` | Terminates running `llama-server` and `llama-cli` processes | `qstop` |
+| Command | Shorthand | Description | Primary Example |
+| :--- | :--- | :--- | :--- |
+| `qwfile` | — | File, codebase, repository, and URL analyzer with RAM symbol resolution | `qwfile -c 32 -r 3 src/ "Analyze system architecture"` |
+| `qwsec` | — | Security audit and CWE/OWASP vulnerability scanner | `qwsec cll/server.py "Check for CSRF and injection"` |
+| `qwpipe` | — | Piped stream processor for shell stdout/stderr | `git diff \| qwpipe "Review changes for breaking bugs"` |
+| `qwcli` | `qwc` | Interactive terminal chat or single-turn query (`-s`) | `qwcli -c 32 -r 2` |
+| `qws` | — | Single-turn query shortcut (unquoted prompts supported) | `qws explain Kalman filter sensor fusion in robotics` |
+| `qwsearch` | `qwsr` | Tor-isolated web search with local Qwen synthesis | `qwsearch -r 3 "Linux 6.13 scheduler changes"` |
+| `qwserver` | `qw` | Launches `llama-server` with custom context, port, and reasoning | `qwserver -c 32 -p 8080 -r 2` |
+| `qstop` | — | Terminates active `llama-server` and `llama-cli` processes | `qstop` |
+| `cll` | — | Launches Chat Local LLM Web UI (`127.0.0.1:41625`) | `cll` / `cll stop` |
 
-#### Common Flags
+---
 
-- `-c <num>`: Context tokens. Multipliers <= 256 are multiplied by 1024 (e.g., `-c 16` -> 16,384 tokens, `-c 32` -> 32,768 tokens, `-c 48` -> 49,152 tokens; model ceiling: 49,152). Default: `32` (32,768).
-- `-r <0..4>`: Reasoning effort (0: `off`, 1: `low`, 2: `medium` [default], 3: `high`, 4: `max`).
-- `--no-rules`: Disables `prompts/cli_rules.md` (raw model behavior). Default for single-turn queries.
-- `--rules`: Forces developer rules on single-turn queries. Default for interactive terminal chat.
-- `-f <format>`: (`qwfile` only) Force parser format: `pdf`, `txt`, or `code`. Automatic by default (requires `poppler`'s `pdftotext` for PDF).
-- `-h`, `--help`: Displays command usage.
+### Terminal Command Reference Guide
 
-#### Tor-Isolated Web Search (`qwsearch`)
+#### 1. Codebase & File Analyzer (`qwfile`)
 
-`qwsearch` allows local models to answer queries using real-time internet data while maintaining an absolute OPSEC guarantee: **no packets or DNS queries ever leave the machine outside the Tor network**.
+`qwfile` is a unified code and document analysis engine capable of analyzing single files, remote links, and whole multi-thousand-file repositories.
 
-- **Fail-Closed Gatekeeper:** Probes `127.0.0.1:9050` before every request. If Tor is stopped or unreachable, the process aborts immediately (exit code 2) without attempting cleartext connections.
-- **Remote DNS Resolution:** Uses `socks5h://` so domain names are resolved exclusively by the Tor exit node, preventing local ISP DNS leakage.
-- **Resilient Engine Cascade:** Tries DuckDuckGo HTML first; if blocked by anti-bot rate limits on the Tor circuit, automatically falls back to Bing over Tor SOCKS5h, enriched with Wikipedia context.
-- **Useful Flags:**
-  - `qwsearch "query"`: Standard search and synthesis.
-  - `qwsearch --raw "query"`: Outputs Markdown search context without running the LLM (ideal for piping into `qwpipe`).
-  - `qwsearch --json "query"`: Outputs raw search results as JSON.
-  - `qwsearch --leak-test`: Audits the Tor connection via `check.torproject.org` and prints the active exit node IP.
-  - `qwsearch --new-circuit "query"`: Requests a fresh Tor identity (SIGNAL NEWNYM) before querying.
+```bash
+qwfile [-c 16|32|48] [-r 0..4] [-f pdf|txt|code] [--keep] [--export <dir>] <target> [prompt...]
+```
 
-> [!NOTE]
-> The built-in `llama-server` Web UI (`http://127.0.0.1:8080`) is a static offline C++ interface without tool-calling hooks. Real-time Tor web search is driven through `qwsearch` in the CLI or through the shielded `cll` interface (`http://127.0.0.1:41625`).
+- **Smart Path & Alias Resolution:** Automatically resolves relative paths, `~` tilde paths, fuzzy project names (e.g. `my-project` resolved under `~/Projects/` or `~/Code/`), and local subdirectories.
+- **In-Memory Dependency Symbol Resolver (RAM Cache):** When inspecting a C/C++ or Python file, `qwfile` scans `#include` and `import` statements, statically extracts class, struct, enum, and function signatures into RAM cache in < 10 ms, filters down to only the symbols actually referenced in the target file, and injects them into the prompt.
+- **Remote Repositories & URLs over Tor:** Supports GitHub repository shorthand (`owner/repo` or `owner/repo/path/to/file`) and raw web URLs, downloading and analyzing text strictly through Tor SOCKS5h (`127.0.0.1:9050`).
+- **Hierarchical Project & Directory Explorer:** When `<target>` is a directory or repository (e.g. `qwfile my-project` or `qwfile .`):
+  1. **Tree Exploration (`ls`):** Maps the directory structure, filtering out `.git`, `__pycache__`, `.venv`, and binary artifacts.
+  2. **Chunked Module Analysis:** Partitions the repository into manageable subsystem chunks (up to 24,000 characters each) and analyzes each module sequentially.
+  3. **Note Taking in `/tmp/local-llm/`:** Saves intermediate module notes to `/tmp/local-llm/<project>/notes/module_XX.md`, directory maps to `00_tree.txt`, and architecture notes to `01_overview.md`.
+  4. **Consolidated Final Synthesis:** Synthesizes accumulated notes into a final report streamed live to stdout and saved to `/tmp/local-llm/<project>/final_analysis.md`.
+- **Options & Flags:**
+  - `-c 16|32|48`: Context tokens (16K, 32K [default], 48K max ceiling).
+  - `-r 0..4`: Reasoning effort (0: `off`, 1: `low`, 2: `medium` [default], 3: `high`, 4: `max`).
+  - `-f pdf|txt|code`: Format override (PDF files are extracted via `pdftotext`).
+  - `--keep`: Copies the complete notes and report from `/tmp/` to permanent storage under `~/.local/share/local-llm/reports/<project>_<timestamp>/`.
+  - `--export <dir>`: Exports the complete analysis workspace to a custom directory.
 
-#### Chat Local LLM (`cll`) — Authentic llama-ui with Tor & Power Bar
+##### Examples:
+```bash
+# Analyze a single header with automatic dependency symbol resolution
+qwfile src/core/engine.h "Explain state management and concurrency controls"
 
-`cll` launches the gateway on `http://127.0.0.1:41625` and opens your default browser automatically:
+# Analyze a whole repository with hierarchical chunking and live streaming
+qwfile my-project "Analyze overall architecture, data pipeline, and error handling"
+
+# Analyze a remote GitHub repository over Tor with high reasoning
+qwfile torproject/tor -r 3 "Describe connection handshake and hidden service directory architecture"
+
+# Analyze and permanently archive notes
+qwfile src/ --keep "Audit memory safety and concurrency risks"
+```
+
+---
+
+#### 2. Security Auditor & Vulnerability Scanner (`qwsec`)
+
+`qwsec` runs deep vulnerability inspections against OWASP Top 10, CWE, memory safety issues, injection, broken crypto, authentication flaws, and logic bugs.
+
+```bash
+qwsec [-c 16|32|48] [-r 0..4] <file_or_code> [prompt...]
+```
+
+- Accepts a file path, a raw code string, or piped code from stdin.
+- Automatically applies `prompts/cli_rules.md` security personas.
+- Identifies vulnerability severity, explains exploit vectors, and outputs hardened refactored code.
+
+##### Examples:
+```bash
+# Audit a Python backend server
+qwsec cll/server.py "Check for CSRF, SSRF, and unauthenticated endpoints"
+
+# Pipe code directly from git diff or clipboard
+git show HEAD | qwsec "Audit commit for security regressions"
+```
+
+---
+
+#### 3. Piped Stream Processor (`qwpipe`)
+
+`qwpipe` processes arbitrary command output streamed through stdin without saving intermediate files:
+
+```bash
+<command> | qwpipe [-c 16|32|48] [-r 0..4] [prompt...]
+```
+
+- Bypasses Linux kernel argument length limits using temporary file streaming.
+- Ideal for analyzing build failures, compiler errors, systemd journal logs, and network outputs.
+
+##### Examples:
+```bash
+# Diagnose a build or compiler error
+cargo build 2>&1 | qwpipe -c 32 "Explain the compilation error and provide the fix"
+
+# Analyze system logs
+journalctl -u tor -n 100 --no-pager | qwpipe "Identify circuit failure reasons"
+```
+
+---
+
+#### 4. Interactive & Single-Turn Terminal Chat (`qwcli` / `qws`)
+
+```bash
+qwcli [-c 16|32|48] [-r 0..4] [-s] [-p "prompt"] [--rules|--no-rules]
+qws [prompt...]
+```
+
+- **Interactive Mode (`qwcli`):** Starts a multi-turn conversation in the terminal.
+- **Single-Turn Mode (`qwcli -s` or `qws`):** Answers the question directly and exits cleanly.
+- **Unquoted Prompt Support:** `qws` accepts multi-word prompts without requiring enclosing quotes.
+- **Rules Toggle:** `--rules` enforces direct developer guidelines (`prompts/cli_rules.md`); `--no-rules` allows raw model generation.
+
+##### Examples:
+```bash
+# Start interactive terminal session
+qwcli -c 32 -r 2
+
+# Instant single-turn query without quotes
+qws explain how EKF handles IMU gyro drift and GPS loss
+
+# Query with maximum reasoning effort
+qwcli -r 4 -s -p "Prove that the square root of 2 is irrational"
+```
+
+---
+
+#### 5. Tor-Isolated Web Search (`qwsearch`)
+
+`qwsearch` queries external search engines and `.onion` hidden services strictly over Tor SOCKS5h (`127.0.0.1:9050`):
+
+```bash
+qwsearch [-r 0..4] [-n limit] [--raw] [--json] [--leak-test] [--new-circuit] <query>
+```
+
+- **Strict Fail-Closed OPSEC:** Aborts immediately if Tor is offline. Uses `socks5h://` so all DNS resolution occurs on the Tor exit node.
+- **Multi-Engine Cascade:** Queries DuckDuckGo HTML, Bing (Tor), Wikipedia REST API, and GitHub Search API.
+- **Native `.onion` Discovery:** Automatically queries Ahmia hidden service search for `.onion` and dark web queries.
+
+##### Examples:
+```bash
+# Web search with Qwen synthesis
+qwsearch "Arch Linux latest package updates"
+
+# High reasoning search on technical protocol
+qwsearch -r 3 "Ed25519 signature malleability vulnerabilities"
+
+# Raw markdown output piped into security audit
+qwsearch --raw "OpenSSL CVE 2026" | qwsec "Evaluate impact on our system"
+
+# Verify Tor circuit and check exit IP
+qwsearch --leak-test
+```
+
+---
+
+#### 6. Server Control (`qwserver` / `qstop`)
+
+```bash
+qwserver [-c 16|32|48] [-p port] [-r 0..4]
+qstop
+```
+
+- `qwserver`: Launches `llama-server` on `127.0.0.1:8080` (or custom `-p`) with Flash Attention, Q4_0 KV cache, and 512 MiB VRAM safety margin.
+- `qstop`: Safely terminates any running `llama-server` or `llama-cli` processes and releases GPU memory.
+
+---
+
+#### 7. Chat Local LLM Web Gateway (`cll`)
+
+`cll` launches the full-featured browser interface on `http://127.0.0.1:41625` with integrated Tor controls and LLM power management:
 
 ```bash
 cll
-```
-
-- **Authentic `llama-ui` Frontend:** Embeds the full upstream `llama-ui` interface (chat branching, message editing, file/document attachments, sampling parameters, token counters).
-- **Integrated Control Bar:** Manage LLM power state (On/Off), Token Limit (4K to 48K context, 32K default), Reasoning levels (0..4), and Tor Web / `.onion` search modes directly from the page without popups.
-- **Strict Zero-Log Privacy & CSRF Protection:** `llama-server` is spawned with `--log-disable`, all process I/O is directed to `/dev/null`, and cross-origin requests to `/api/*` are blocked.
-- **Tor OPSEC & .onion Discovery:** Searches Ahmia for `.onion` queries, handles parallel scraping, and protects against prompt injection and XML sandbox delimiter breakouts.
-- **Clear All History:** Includes an instant storage wipe button that deletes local origin data and IndexedDB databases.
-
-To stop the server:
-```bash
 cll stop
 ```
+
+- Embeds upstream `llama-ui` frontend.
+- Live token limit selector (4K to 48K context).
+- Live Tor IP rotation (`🔄 Yeni IP`) and complete browser history wiper.
+- Zero disk logging (`--log-disable`).
+
+---
+
+#### 8. Manual Pages (`man 1`)
+
+Standard UNIX manual pages are provided under `man/man1/` and automatically linked to `~/.local/share/man/man1` by `setup.sh`:
+
+```bash
+man qwfile
+```
+
+```bash
+man qwsec
+```
+
+```bash
+man qwpipe
+```
+
+```bash
+man qwcli
+```
+
+```bash
+man qwserver
+```
+
+| Manual Page | Description |
+| :--- | :--- |
+| `man qwfile` | Complete manual for file, remote URL, and hierarchical codebase analyzer, including symbol resolving and chunking options |
+| `man qwsec` | Security audit manual covering vulnerability analysis profiles and piped usage |
+| `man qwpipe` | Piped standard input processing manual |
+| `man qwcli` | Interactive and single-turn terminal LLM client manual |
+| `man qwserver` | High-throughput `llama-server` background daemon manual |
 
 ### D. Direct Hugging Face Execution (Without Pre-downloading)
 

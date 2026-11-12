@@ -8,6 +8,7 @@ source "${SCRIPT_DIR}/scripts/common.sh"
 MODEL_REPO="mradermacher/Huihui-Qwen3-4B-Instruct-2507-abliterated-i1-GGUF"
 COMMAND_NAME="qwen-local"
 BIN_DIR="${BIN_DIR:-${HOME}/.local/bin}"
+MAN_DIR="${MAN_DIR:-${HOME}/.local/share/man/man1}"
 TARGET="${SCRIPT_DIR}/${COMMAND_NAME}"
 LINK="${BIN_DIR}/${COMMAND_NAME}"
 LEGACY_LINK="${BIN_DIR}/glm"
@@ -21,12 +22,14 @@ already done are skipped, so it is safe to run again:
   1. llama-cpp and a ggml GPU backend via pacman (asks for sudo)
   2. ${MODEL_FILE} from ${MODEL_REPO} (resumes a partial download)
   3. a '${COMMAND_NAME}' link in ${BIN_DIR}
+  4. manual pages (man1) linked into ${MAN_DIR}
 
-  --uninstall   Remove the '${COMMAND_NAME}' link. Packages and the model are kept.
+  --uninstall   Remove '${COMMAND_NAME}' and manpage links. Packages and the model are kept.
 
 Environment:
   BACKEND      cuda or vulkan (default: cuda if nvidia-smi exists, otherwise vulkan)
   BIN_DIR      Directory for the '${COMMAND_NAME}' link (default: ~/.local/bin)
+  MAN_DIR      Directory for man1 manual pages (default: ~/.local/share/man/man1)
   MODEL_PATH   Where the model is stored (default: next to this script)
 EOF
 }
@@ -125,6 +128,37 @@ link_command() {
     esac
 }
 
+link_man_pages() {
+    local src_dir="${SCRIPT_DIR}/man/man1"
+    if [[ -d "${src_dir}" ]]; then
+        mkdir -p "${MAN_DIR}"
+        for manfile in "${src_dir}"/*.1; do
+            [[ -f "${manfile}" ]] || continue
+            local base
+            base="$(basename "${manfile}")"
+            local dest="${MAN_DIR}/${base}"
+            ln -sf "${manfile}" "${dest}"
+            echo "Manpage: linked ${dest} -> ${manfile}"
+        done
+    fi
+}
+
+unlink_man_pages() {
+    local src_dir="${SCRIPT_DIR}/man/man1"
+    if [[ -d "${src_dir}" && -d "${MAN_DIR}" ]]; then
+        for manfile in "${src_dir}"/*.1; do
+            [[ -f "${manfile}" ]] || continue
+            local base
+            base="$(basename "${manfile}")"
+            local dest="${MAN_DIR}/${base}"
+            if [[ -L "${dest}" && "$(readlink -f "${dest}")" == "$(readlink -f "${manfile}")" ]]; then
+                rm -f "${dest}"
+                echo "Manpage: removed link ${dest}"
+            fi
+        done
+    fi
+}
+
 unlink_command() {
     local removed=0
     if is_our_link; then
@@ -152,9 +186,13 @@ case "${1:-}" in
         install_llama_cpp
         download_model
         link_command
+        link_man_pages
         echo "Setup complete. Start with '${COMMAND_NAME} server' or '${COMMAND_NAME} cli'."
         ;;
-    --uninstall) unlink_command ;;
+    --uninstall)
+        unlink_command
+        unlink_man_pages
+        ;;
     -h | --help) usage ;;
     *)
         usage >&2
