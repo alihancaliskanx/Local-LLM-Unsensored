@@ -1,3 +1,7 @@
 *.gguf
 *.gguf.part
 *.log
+__pycache__/
+*.py[cod]
+.venv/
+venv/

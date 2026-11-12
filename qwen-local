@@ -14,7 +14,7 @@ Commands:
 
 Options after the command are passed to llama.cpp unchanged.
 Runtime defaults can be overridden with environment variables, e.g.:
-  NGL=20 CTX=4096 qwen-local server
+  NGL=20 CTX=32768 qwen-local server
 EOF
 }
 
@@ -22,8 +22,8 @@ command="${1:-}"
 [[ $# -gt 0 ]] && shift
 
 case "${command}" in
-    server) exec "${SCRIPT_DIR}/run-server.sh" "$@" ;;
-    cli) exec "${SCRIPT_DIR}/run-cli.sh" "$@" ;;
+    server) exec "${SCRIPT_DIR}/scripts/run-server.sh" "$@" ;;
+    cli) exec "${SCRIPT_DIR}/scripts/run-cli.sh" "$@" ;;
     help | -h | --help) usage ;;
     "")
         usage >&2

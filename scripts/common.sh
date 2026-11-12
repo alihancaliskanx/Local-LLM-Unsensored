@@ -1,10 +1,13 @@
 # shellcheck shell=bash
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
 MODEL_FILE="Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf"
-MODEL_PATH="${MODEL_PATH:-${SCRIPT_DIR}/${MODEL_FILE}}"
+MODEL_PATH="${MODEL_PATH:-${REPO_ROOT}/${MODEL_FILE}}"
 GPU_LAYERS="${NGL:-auto}"
 FIT_MARGIN="${FIT_TARGET:-512}"
-CTX_SIZE="${CTX:-8192}"
+CTX_SIZE="${CTX:-32768}"
 THREADS="${THREADS:-6}"
 
 # shellcheck disable=SC2034 # used by the scripts that source this file

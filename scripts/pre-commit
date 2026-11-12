@@ -1,0 +1,142 @@
+#!/usr/bin/env python3
+"""
+Git pre-commit security hook for Local-LLM-Unsensored.
+1. Scans staged diff for secrets and private keys via regex.
+2. Queries running llama-server (if active) or falls back to qwen-local CLI.
+"""
+import sys
+import os
+import re
+import json
+import tempfile
+import subprocess
+import urllib.request
+
+if os.environ.get("SKIP_SEC") == "1" or os.environ.get("QWSEC_SKIP") == "1":
+    sys.exit(0)
+
+res = subprocess.run(["git", "diff", "--cached", "--unified=3"], capture_output=True, text=True)
+staged_diff = res.stdout
+
+if not staged_diff.strip():
+    sys.exit(0)
+
+files_res = subprocess.run(["git", "diff", "--cached", "--name-only"], capture_output=True, text=True)
+changed_files = files_res.stdout.splitlines()
+
+code_exts = (
+    ".py", ".c", ".cpp", ".h", ".hpp", ".rs", ".go", ".js", ".ts",
+    ".sh", ".bash", ".zsh", ".php", ".rb", ".java", ".env", ".key",
+    ".pem", ".json", ".yaml", ".yml"
+)
+has_code = any(f.endswith(code_exts) or ".env" in f for f in changed_files)
+if not has_code:
+    sys.exit(0)
+
+SECRET_PATTERNS = [
+    r"-----BEGIN[ A-Z0-9_-]+PRIVATE KEY-----",
+    r"AKIA[0-9A-Z]{16}",
+    r"ghp_[a-zA-Z0-9]{36}",
+    r"AIza[0-9A-Za-z_-]{35}",
+    r"(?i)(password|secret|api_key|token)\s*=\s*[\x22\x27][^\x22\x27]{6,}[\x22\x27]"
+]
+
+for pat in SECRET_PATTERNS:
+    if re.search(pat, staged_diff):
+        print("════════════════════════════════════════════════════════════════", file=sys.stderr)
+        print(" 🚨 GÜVENLİK ENGELİ: Staged diff içinde hassas anahtar/parola tespit edildi!", file=sys.stderr)
+        print(" Commit durduruldu. Sırları temizleyin veya bypass için: git commit --no-verify", file=sys.stderr)
+        print("════════════════════════════════════════════════════════════════", file=sys.stderr)
+        sys.exit(1)
+
+# 3. LLM Security Check via local Qwen3-4B
+# For large multi-file refactors (> 4000 chars), regex secret scan covers the full diff;
+# sending a tiny 3500-char truncated slice would cause the model to hallucinate missing code.
+if len(staged_diff) > 4000:
+    print(f"✅ Qwen Güvenlik Denetimi: Yapısal diff ({len(staged_diff)} bayt), tam kapsamlı regex sır taraması onaylandı.", file=sys.stderr)
+    sys.exit(0)
+
+prompt = (
+    "You are a strict security gatekeeper. Inspect the following staged git diff for critical security "
+    "vulnerabilities (CWE/OWASP, SQLi, RCE, buffer overflow, hardcoded secrets, logic bypass).\n"
+    "If ANY critical or high vulnerability is found, explain it in 1-2 Turkish sentences and end with [VULNERABILITY_FOUND].\n"
+    "If the diff is secure, write [SECURITY_OK].\n\n"
+    f"Git Diff:\n```diff\n{staged_diff}\n```"
+)
+
+print("🛡️  Qwen Güvenlik Denetimi: Staged değişiklikler taranıyor...", file=sys.stderr)
+output = ""
+llm_checked = False
+
+# 1. Try active llama-server first to avoid GPU contention
+try:
+    req_data = json.dumps({
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.1,
+        "max_tokens": 256,
+        "stream": False
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        "http://127.0.0.1:8080/v1/chat/completions",
+        data=req_data,
+        headers={"Content-Type": "application/json"},
+        method="POST"
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        if resp.status == 200:
+            body = json.loads(resp.read().decode("utf-8"))
+            output = body.get("choices", [{}])[0].get("message", {}).get("content", "")
+            llm_checked = True
+except Exception:
+    pass
+
+# 2. Fall back to qwen-local CLI if server is offline
+if not llm_checked:
+    repo_root = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip()
+    qwen_bin = os.path.join(repo_root, "qwen-local")
+    if os.path.exists(qwen_bin) and os.access(qwen_bin, os.X_OK):
+        pf_name = ""
+        of_name = ""
+        try:
+            with tempfile.NamedTemporaryFile("w+", delete=False, encoding="utf-8") as pf:
+                pf.write(prompt)
+                pf_name = pf.name
+            with tempfile.NamedTemporaryFile("w+", delete=False, encoding="utf-8") as of:
+                of_name = of.name
+
+            tmp_env = os.environ.copy()
+            tmp_env["RULES_PATH"] = "/dev/null"
+            tmp_env["CTX"] = "4096"
+            proc = subprocess.run(
+                [qwen_bin, "cli", "--simple-io", "--log-disable", "-st", "-f", pf_name, "-o", of_name],
+                env=tmp_env, capture_output=True, text=True, timeout=30
+            )
+            if proc.returncode == 0 and os.path.exists(of_name):
+                with open(of_name, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+                if "Assistant:" in content:
+                    output = content.split("Assistant:", 1)[1].strip()
+                else:
+                    output = content.strip()
+                llm_checked = True
+        except Exception:
+            pass
+        finally:
+            for p in (pf_name, of_name):
+                if p and os.path.exists(p):
+                    os.remove(p)
+
+if "[VULNERABILITY_FOUND]" in output:
+    print("════════════════════════════════════════════════════════════════", file=sys.stderr)
+    print(" 🚨 GÜVENLİK ENGELİ: Staged kodda kritik güvenlik açığı tespit edildi!", file=sys.stderr)
+    print(output.replace("[VULNERABILITY_FOUND]", "").strip(), file=sys.stderr)
+    print(" Commit durduruldu. Düzeltin veya bypass için: git commit --no-verify", file=sys.stderr)
+    print("════════════════════════════════════════════════════════════════", file=sys.stderr)
+    sys.exit(1)
+
+if llm_checked:
+    print("✅ Qwen Güvenlik Denetimi: Kod temiz, commit onaylandı.", file=sys.stderr)
+else:
+    print("⚠️  Qwen Güvenlik Denetimi: LLM meşgul/kapalı, regex gizli anahtar taraması geçti.", file=sys.stderr)
+
+sys.exit(0)

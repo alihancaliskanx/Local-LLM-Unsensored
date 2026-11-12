@@ -47,20 +47,28 @@ When running `Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf` (~2.5 GB
 
 ## 3. Repository Structure
 
-| File | Description |
+| Path | Description |
 | :--- | :--- |
 | `setup.sh` | One-time setup: installs `llama.cpp`, downloads the model, and links the `qwen-local` command into `~/.local/bin` |
-| `qwen-local` | Command entry point: `qwen-local server` and `qwen-local cli` |
-| `qwen.zsh` | Shell helper functions (`qwcli`, `qwfile`, `qwpipe`, `qwsearch`, `qwserver`, `qstop`) with context multipliers and reasoning controls |
-| `qwsearch.py` | Privacy-preserving, Tor-only web search synthesis engine with strict Fail-Closed OPSEC |
-| `qwen-web.py` | Local web agent server with Auto-Detect routing, streaming UI, and Prompt Injection Shield |
-| `page_reader.py` | Safe, Tor-only webpage and `.onion` text extractor with script/style stripping |
-| `security_guard.py` | Multi-layer prompt injection defense and strict XML untrusted-data sandboxing |
-| `rules.md` | System prompt rules configuring the model for direct developer assistant responses |
-| `run-server.sh` | Launches `llama-server` with Web UI and OpenAI-compatible API (`127.0.0.1:8080`) |
-| `run-cli.sh` | Launches interactive terminal chat via `llama-cli` (loads `rules.md` via `-sysf` if present) |
-| `common.sh` | Shared runtime defaults and startup checks sourced by both launchers |
-| `.gitignore` | Excludes large `*.gguf` model weights, partial downloads, and runtime logs from version control |
+| `qwen-local` | Command entry point: dispatches `qwen-local server` and `qwen-local cli` to `scripts/` |
+| `qwen.zsh` | Shell entry point sourcing modular helper scripts under `shell/` |
+| `shell/core.zsh` | Shared context/reasoning resolvers (`32K` default, `48K` ceiling) and `qstop` |
+| `shell/cli.zsh` | Terminal functions (`qwserver`, `qwcli`, `qwfile`, `qwsec`, `qwpipe`) using `-f` file input to bypass the 128 KiB kernel argument limit |
+| `shell/web.zsh` | Tor web search (`qwsearch`) and Chat Local LLM (`cll`) launchers |
+| `scripts/common.sh` | Shared runtime defaults (`CTX=32768`, `-ctk q4_0 -ctv q4_0`) and GPU/binary checks |
+| `scripts/run-server.sh` | Launches `llama-server` on `127.0.0.1:8080` |
+| `scripts/run-cli.sh` | Launches interactive or single-turn chat via `llama-cli` (loads `prompts/cli_rules.md`) |
+| `scripts/pre-commit` | Git pre-commit hook scanning diffs for secrets and security flaws via active server or CLI |
+| `cll/server.py` | Chat Local LLM (CLL) FastAPI gateway (`127.0.0.1:41625`) with CSRF guard and non-blocking streaming |
+| `cll/search.py` | Privacy-preserving, Tor-only web & `.onion` search engine with Fail-Closed OPSEC |
+| `cll/page_reader.py` | Safe, Tor-only webpage, `.onion`, and GitHub/GitLab raw README extractor |
+| `cll/security.py` | Multi-layer prompt injection defense and escaped XML untrusted-data sandboxing |
+| `cll/prompts.py` | System prompt templates for OSINT/dark web research, standard synthesis, and query planning |
+| `prompts/cli_rules.md` | System prompt rules configuring terminal `llama-cli` for direct developer responses |
+| `web/cll_shell.html` | CLL top control bar (power toggle, 4K–48K token selector, Tor status/IP rotation, storage wipe) |
+| `web/llama-ui/` | Embedded upstream `llama-ui` SvelteKit static bundle |
+| `tests/test_suite.py` | Automated unit test suite covering sandbox escaping, token stripping, CSRF checks, and search filters |
+| `.gitignore` | Excludes `*.gguf` model weights, partial downloads, Python bytecode, and runtime logs |
 
 ---
 
@@ -143,19 +151,21 @@ The shell integration provides commands with automatic context scaling, reasonin
 
 | Command | Description | Example |
 | :--- | :--- | :--- |
-| `qwcli` (`qwc`) | Terminal chat or single-turn query (`-s`) | `qwcli -c 16 -r 2 -s -p "Explain recursion"` |
+| `cll` | Launches Chat Local LLM Web UI (`127.0.0.1:41625`) | `cll` / `cll stop` |
+| `qwcli` (`qwc`) | Terminal chat or single-turn query (`-s`) | `qwcli -c 32 -r 2 -s -p "Explain recursion"` |
 | `qws` | Short alias for single-turn query (`qwcli -s -p`) | `qws "What is Rayleigh scattering?"` |
 | `qwsearch` (`qwsr`) | Tor-isolated web search with local Qwen synthesis | `qwsearch "Arch Linux latest changes"` |
-| `qwfile` | Document & code analyzer (supports `.pdf`, `.txt`, code) | `qwfile -c 32 -r 3 qwen-local "Analyze this script"` |
-| `qwpipe` | Pipe processor for shell stdout/stderr | `cat build.log \| qwpipe -c 16 "Find root cause"` |
-| `qwserver` (`qw`) | Launches server with context, port, and reasoning | `qwserver -c 16 -p 8080 -r 2` |
+| `qwfile` | Document & code analyzer (supports `.pdf`, `.txt`, code, >128 KB files) | `qwfile -c 32 -r 3 qwen-local "Analyze this script"` |
+| `qwsec` | Security audit and CWE/OWASP vulnerability scanner | `qwsec cll/server.py` |
+| `qwpipe` | Pipe processor for shell stdout/stderr | `cat build.log \| qwpipe -c 32 "Find root cause"` |
+| `qwserver` (`qw`) | Launches server with context, port, and reasoning | `qwserver -c 32 -p 8080 -r 2` |
 | `qstop` | Terminates running `llama-server` and `llama-cli` processes | `qstop` |
 
 #### Common Flags
 
-- `-c <num>`: Context tokens. Multipliers <= 256 are multiplied by 1024 (e.g., `-c 16` -> 16,384 tokens, `-c 32` -> 32,768 tokens; model ceiling: 32,768). Default: `16`.
+- `-c <num>`: Context tokens. Multipliers <= 256 are multiplied by 1024 (e.g., `-c 16` -> 16,384 tokens, `-c 32` -> 32,768 tokens, `-c 48` -> 49,152 tokens; model ceiling: 49,152). Default: `32` (32,768).
 - `-r <0..4>`: Reasoning effort (0: `off`, 1: `low`, 2: `medium` [default], 3: `high`, 4: `max`).
-- `-R`, `--no-rules`: Disables `rules.md` (raw model behavior). Default for single-turn queries.
+- `--no-rules`: Disables `prompts/cli_rules.md` (raw model behavior). Default for single-turn queries.
 - `--rules`: Forces developer rules on single-turn queries. Default for interactive terminal chat.
 - `-f <format>`: (`qwfile` only) Force parser format: `pdf`, `txt`, or `code`. Automatic by default (requires `poppler`'s `pdftotext` for PDF).
 - `-h`, `--help`: Displays command usage.
@@ -175,7 +185,7 @@ The shell integration provides commands with automatic context scaling, reasonin
   - `qwsearch --new-circuit "query"`: Requests a fresh Tor identity (SIGNAL NEWNYM) before querying.
 
 > [!NOTE]
-> The built-in `llama-server` Web UI (`http://127.0.0.1:8080`) is a static offline C++ interface without tool-calling hooks. Real-time Tor web search is driven through `qwsearch` in the CLI or through the shielded `qwweb` interface.
+> The built-in `llama-server` Web UI (`http://127.0.0.1:8080`) is a static offline C++ interface without tool-calling hooks. Real-time Tor web search is driven through `qwsearch` in the CLI or through the shielded `cll` interface (`http://127.0.0.1:41625`).
 
 #### Chat Local LLM (`cll`) — Authentic llama-ui with Tor & Power Bar
 
@@ -186,9 +196,9 @@ cll
 ```
 
 - **Authentic `llama-ui` Frontend:** Embeds the full upstream `llama-ui` interface (chat branching, message editing, file/document attachments, sampling parameters, token counters).
-- **Integrated Control Bar:** Manage LLM power state (On/Off), Token Limit (4K to 32K context), Reasoning levels (0..4), and Tor Web / `.onion` search modes directly from the page without popups.
-- **Strict Zero-Log Privacy:** `llama-server` is spawned with `--log-disable` and all process I/O is directed to `/dev/null`.
-- **Tor OPSEC & .onion Discovery:** Searches Ahmia for `.onion` queries, handles parallel scraping, and protects against prompt injection.
+- **Integrated Control Bar:** Manage LLM power state (On/Off), Token Limit (4K to 48K context, 32K default), Reasoning levels (0..4), and Tor Web / `.onion` search modes directly from the page without popups.
+- **Strict Zero-Log Privacy & CSRF Protection:** `llama-server` is spawned with `--log-disable`, all process I/O is directed to `/dev/null`, and cross-origin requests to `/api/*` are blocked.
+- **Tor OPSEC & .onion Discovery:** Searches Ahmia for `.onion` queries, handles parallel scraping, and protects against prompt injection and XML sandbox delimiter breakouts.
 - **Clear All History:** Includes an instant storage wipe button that deletes local origin data and IndexedDB databases.
 
 To stop the server:
@@ -201,19 +211,19 @@ cll stop
 Interactive terminal session:
 
 ```bash
-llama-cli -hf mradermacher/Huihui-Qwen3-4B-Instruct-2507-abliterated-i1-GGUF -hff Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf -ngl auto -fit on -fitt 512 -c 8192 -fa on -ctk q8_0 -ctv q8_0 -t 6
+llama-cli -hf mradermacher/Huihui-Qwen3-4B-Instruct-2507-abliterated-i1-GGUF -hff Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf -ngl auto -fit on -fitt 512 -c 32768 -fa on -ctk q4_0 -ctv q4_0 -t 6
 ```
 
 Local API server:
 
 ```bash
-llama-server -hf mradermacher/Huihui-Qwen3-4B-Instruct-2507-abliterated-i1-GGUF -hff Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf -ngl auto -fit on -fitt 512 -c 8192 -np 1 -fa on -ctk q8_0 -ctv q8_0 -t 6 --port 8080
+llama-server -hf mradermacher/Huihui-Qwen3-4B-Instruct-2507-abliterated-i1-GGUF -hff Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf -ngl auto -fit on -fitt 512 -c 32768 -np 1 -fa on -ctk q4_0 -ctv q4_0 -t 6 --port 8080
 ```
 
 ### E. Docker Execution (Optional)
 
 ```bash
-docker run --gpus all --rm -it -p 8080:8080 -v "$(pwd):/models" ghcr.io/ggml-org/llama.cpp:server-cuda -m /models/Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf -ngl 28 -c 8192 -fa on -ctk q8_0 -ctv q8_0 --host 0.0.0.0 --port 8080
+docker run --gpus all --rm -it -p 8080:8080 -v "$(pwd):/models" ghcr.io/ggml-org/llama.cpp:server-cuda -m /models/Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf -ngl 28 -c 32768 -fa on -ctk q4_0 -ctv q4_0 --host 0.0.0.0 --port 8080
 ```
 
 ---
@@ -224,8 +234,8 @@ docker run --gpus all --rm -it -p 8080:8080 -v "$(pwd):/models" ghcr.io/ggml-org
 | :--- | :--- | :--- |
 | `-ngl` | `auto` | Automatically offloads the maximum number of layers that fit into free VRAM (37 offloadable layers in Qwen3-4B). |
 | `-fit on -fitt 512` | `512` MiB | Reserves a 512 MiB VRAM safety margin to avoid `cudaMalloc` out-of-memory errors. |
-| `-c` | `8192` | Context window size in tokens. |
+| `-c` | `32768` | Context window size in tokens (32K default, configurable up to 49,152 / 48K). |
 | `-np` | `1` | Allocates a single parallel slot on `llama-server` to prevent 4x KV cache allocation. |
 | `-fa on` | `on` | Enables Flash Attention (`llama.cpp` >= 0.6 requires explicit `on`, `off`, or `auto`). |
-| `-ctk q8_0 -ctv q8_0` | `q8_0` | Quantizes K and V caches to 8-bit, halving the KV cache from ~1.2 GB to ~600 MB on 8192 context. |
+| `-ctk q4_0 -ctv q4_0` | `q4_0` | Quantizes K and V caches to 4-bit, enabling 32K–48K context windows within 4 GB VRAM. |
 | `-t` | `6` | Number of CPU threads allocated for non-offloaded layers (tuned for 6 physical cores). |

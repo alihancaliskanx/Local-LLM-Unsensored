@@ -222,8 +222,6 @@
   </header>
 
   <iframe id="llama-ui-frame" src="about:blank"></iframe>
-  <iframe src="http://127.0.0.1:8080/cll-wipe" style="display:none;width:0;height:0;border:0;"></iframe>
-  <iframe src="http://127.0.0.1:8088/cll-wipe" style="display:none;width:0;height:0;border:0;"></iframe>
 
   <script>
     let llmRunning = false;
@@ -289,7 +287,7 @@
       if (running) {
         btn.className = 'cll-power-btn on';
         dot.textContent = '🟢';
-        const k = Math.round((ctxVal || 16384) / 1024);
+        const k = Math.round((ctxVal || 32768) / 1024);
         txt.textContent = `LLM Açık (${k}K) — Kapat`;
       } else {
         btn.className = 'cll-power-btn off';
@@ -347,7 +345,10 @@
             body: JSON.stringify({ ctx })
           });
           const data = await res.json();
-          updatePowerUI(Boolean(data.ready), false, ctx);
+          if (!data.ready && data.error) {
+            alert('LLM Başlatılamadı:\n' + data.error);
+          }
+          updatePowerUI(Boolean(data.ready), false, data.ctx || ctx);
           const frame = document.getElementById('llama-ui-frame');
           if (frame && frame.contentWindow) {
             frame.contentWindow.location.reload();
@@ -373,7 +374,10 @@
           body: JSON.stringify({ ctx })
         });
         const data = await res.json();
-        updatePowerUI(Boolean(data.ready), false, ctx);
+        if (!data.ready && data.error) {
+          alert('LLM Yeniden Başlatılamadı:\n' + data.error);
+        }
+        updatePowerUI(Boolean(data.ready), false, data.ctx || ctx);
         const frame = document.getElementById('llama-ui-frame');
         if (frame && frame.contentWindow) {
           frame.contentWindow.location.reload();

@@ -123,14 +123,32 @@ def clean_bing_url(raw_url: str) -> str:
     return raw_url
 
 
+def is_result_relevant(query: str, title: str, snippet: str) -> bool:
+    """
+    Ensures search results contain at least one meaningful keyword from the query,
+    filtering out unrelated geo-ads (supermarkets, local clinics, etc.) served by Tor exit nodes.
+    """
+    query_words = set(re.findall(r'\b[a-zA-Z0-9_-]{3,}\b', query.lower()))
+    stopwords = {
+        'the', 'and', 'for', 'with', 'what', 'how', 'official', 'latest', 'current',
+        'recent', 'anda', 'resmi', 'güncel', 'olan', 'paket', 'package', 'packages',
+        'nedir', 'nelerdir', 'hakkinda'
+    }
+    core_keywords = {w for w in query_words if w not in stopwords}
+    if not core_keywords:
+        return True
+    text = f"{title} {snippet}".lower()
+    return any(kw in text for kw in core_keywords)
+
+
 def search_duckduckgo_html(query: str, limit: int = 5) -> List[Dict[str, str]]:
-    """Queries DuckDuckGo HTML strictly over Tor SOCKS5h."""
+    """Queries DuckDuckGo HTML strictly over Tor SOCKS5h with US-EN localization."""
     url = "https://html.duckduckgo.com/html/"
-    data = {"q": query}
+    data = {"q": query, "kl": "us-en"}
     headers = {
         "User-Agent": USER_AGENT,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
+        "Accept-Language": "en-US,en;q=0.9",
         "Content-Type": "application/x-www-form-urlencoded"
     }
 
@@ -152,12 +170,13 @@ def search_duckduckgo_html(query: str, limit: int = 5) -> List[Dict[str, str]]:
             snippet = s_elem.get_text(strip=True) if s_elem else ""
 
             if title and clean_url and not clean_url.startswith("//duckduckgo.com"):
-                results.append({
-                    "title": title,
-                    "url": clean_url,
-                    "snippet": snippet,
-                    "engine": "DuckDuckGo"
-                })
+                if is_result_relevant(query, title, snippet):
+                    results.append({
+                        "title": title,
+                        "url": clean_url,
+                        "snippet": snippet,
+                        "engine": "DuckDuckGo"
+                    })
             if len(results) >= limit:
                 break
         return results
@@ -166,12 +185,13 @@ def search_duckduckgo_html(query: str, limit: int = 5) -> List[Dict[str, str]]:
 
 
 def search_bing(query: str, limit: int = 5) -> List[Dict[str, str]]:
-    """Queries Bing Search strictly over Tor SOCKS5h."""
-    url = f"https://www.bing.com/search?q={urllib.parse.quote_plus(query)}"
+    """Queries Bing Search strictly over Tor SOCKS5h with US-EN localization and relevance filtering."""
+    url = f"https://www.bing.com/search?q={urllib.parse.quote_plus(query)}&setlang=en-US&cc=US"
     headers = {
         "User-Agent": USER_AGENT,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5"
+        "Accept-Language": "en-US,en;q=0.9",
+        "Cookie": "SRCHHPGUSR=ADLT=DEMO&NRSLT=20&SRCHLANG=en; _EDGE_S=mkt=en-us&ui-lang=en-us"
     }
 
     try:
@@ -195,12 +215,13 @@ def search_bing(query: str, limit: int = 5) -> List[Dict[str, str]]:
             snippet = p_elem.get_text(strip=True) if p_elem else ""
 
             if title and clean_url and clean_url.startswith("http"):
-                results.append({
-                    "title": title,
-                    "url": clean_url,
-                    "snippet": snippet,
-                    "engine": "Bing"
-                })
+                if is_result_relevant(query, title, snippet):
+                    results.append({
+                        "title": title,
+                        "url": clean_url,
+                        "snippet": snippet,
+                        "engine": "Bing"
+                    })
             if len(results) >= limit:
                 break
         return results
@@ -463,14 +484,22 @@ def synthesize_with_llm(query: str, context: str, reasoning_level: int = 2) -> N
     }.get(reasoning_level, ["--reasoning", "on", "--reasoning-effort", "medium"])
 
     import tempfile
-    with tempfile.NamedTemporaryFile("w+", delete=False) as tf:
+    with tempfile.NamedTemporaryFile("w+", delete=False, encoding="utf-8") as pf:
+        pf.write(full_prompt)
+        prompt_file = pf.name
+    with tempfile.NamedTemporaryFile("w+", delete=False, encoding="utf-8") as tf:
         tmp_name = tf.name
 
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    qwen_bin = os.path.join(repo_root, "qwen-local")
+    if not os.path.exists(qwen_bin):
+        qwen_bin = "qwen-local"
+
     cmd = [
-        "qwen-local", "cli",
+        qwen_bin, "cli",
         "--simple-io", "--log-disable", "-st",
-        "-c", "8192",
-        "-p", full_prompt,
+        "-c", "16384",
+        "-f", prompt_file,
         "-o", tmp_name
     ] + reasoning_flags
 
@@ -492,8 +521,9 @@ def synthesize_with_llm(query: str, context: str, reasoning_level: int = 2) -> N
     except Exception as e:
         sys.stderr.write(f"\n[Error during LLM synthesis: {e}]\n")
     finally:
-        if os.path.exists(tmp_name):
-            os.remove(tmp_name)
+        for p in (prompt_file, tmp_name):
+            if os.path.exists(p):
+                os.remove(p)
 
 
 def main():

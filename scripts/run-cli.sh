@@ -2,10 +2,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=common.sh
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=scripts/common.sh
 source "${SCRIPT_DIR}/common.sh"
 
-RULES_PATH="${RULES_PATH:-${SCRIPT_DIR}/cli_rules.md}"
+RULES_PATH="${RULES_PATH:-${REPO_ROOT}/prompts/cli_rules.md}"
 
 require_model
 require_binary llama-cli
