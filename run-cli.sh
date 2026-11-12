@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 source "${SCRIPT_DIR}/common.sh"
 
-RULES_PATH="${RULES_PATH:-${SCRIPT_DIR}/rules.md}"
+RULES_PATH="${RULES_PATH:-${SCRIPT_DIR}/cli_rules.md}"
 
 require_model
 require_binary llama-cli

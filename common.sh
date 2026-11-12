@@ -15,8 +15,8 @@ COMMON_ARGS=(
     -fitt "${FIT_MARGIN}"
     -c "${CTX_SIZE}"
     -fa on
-    -ctk q8_0
-    -ctv q8_0
+    -ctk q4_0
+    -ctv q4_0
     -t "${THREADS}"
 )
 

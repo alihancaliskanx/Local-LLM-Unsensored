@@ -6,12 +6,14 @@ Guarantees Fail-Closed OPSEC: No network packet ever leaves the machine outside 
 
 import sys
 import os
+import re
 import json
 import socket
 import base64
 import argparse
 import subprocess
 import urllib.parse
+from collections import Counter
 from typing import List, Dict, Optional, Tuple
 
 try:
@@ -207,27 +209,193 @@ def search_bing(query: str, limit: int = 5) -> List[Dict[str, str]]:
 
 
 def fetch_wikipedia_summary(query: str) -> Optional[Dict[str, str]]:
-    """Retrieves Wikipedia encyclopedic context strictly over Tor SOCKS5h."""
-    url = f"https://en.wikipedia.org/w/api.php?action=opensearch&search={urllib.parse.quote_plus(query)}&limit=1&format=json"
+    """Retrieves Wikipedia encyclopedic context strictly over Tor SOCKS5h using REST API with OpenSearch fallback."""
     headers = {"User-Agent": USER_AGENT}
+    clean_title = query.strip().replace(" ", "_")
+
+    # 1. Try direct REST summary
+    direct_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(clean_title)}"
     try:
-        r = requests.get(url, proxies=TOR_PROXIES, headers=headers, timeout=8)
+        r = requests.get(direct_url, proxies=TOR_PROXIES, headers=headers, timeout=8)
+        if r.status_code == 200:
+            d = r.json()
+            extract = d.get("extract", "")
+            if extract:
+                return {
+                    "title": f"Wikipedia: {d.get('title')}",
+                    "url": d.get("content_urls", {}).get("desktop", {}).get("page", f"https://en.wikipedia.org/wiki/{clean_title}"),
+                    "snippet": extract,
+                    "engine": "Wikipedia"
+                }
+    except Exception:
+        pass
+
+    # 2. Fallback to OpenSearch to discover canonical article name
+    opensearch_url = f"https://en.wikipedia.org/w/api.php?action=opensearch&search={urllib.parse.quote_plus(query)}&limit=1&format=json"
+    try:
+        r = requests.get(opensearch_url, proxies=TOR_PROXIES, headers=headers, timeout=8)
         if r.status_code == 200:
             data = r.json()
-            if len(data) >= 4 and data[1] and data[3]:
-                title = data[1][0]
-                snippet = data[2][0] if data[2] and data[2][0] else ""
-                link = data[3][0]
-                if title and link:
-                    return {
-                        "title": f"Wikipedia: {title}",
-                        "url": link,
-                        "snippet": snippet,
-                        "engine": "Wikipedia"
-                    }
+            if len(data) >= 4 and data[1]:
+                canonical_title = data[1][0]
+                canon_clean = canonical_title.replace(" ", "_")
+                r2 = requests.get(f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(canon_clean)}", proxies=TOR_PROXIES, headers=headers, timeout=8)
+                if r2.status_code == 200:
+                    d2 = r2.json()
+                    extract2 = d2.get("extract", "")
+                    if extract2:
+                        return {
+                            "title": f"Wikipedia: {d2.get('title')}",
+                            "url": d2.get("content_urls", {}).get("desktop", {}).get("page", f"https://en.wikipedia.org/wiki/{canon_clean}"),
+                            "snippet": extract2,
+                            "engine": "Wikipedia"
+                        }
     except Exception:
         pass
     return None
+
+
+_AHMIA_TOKEN = ("c37337", "6dc8c0")
+EMOJI_RE = re.compile(r'[\u2600-\u27bf\U0001f300-\U0001f9ff\U0001fa00-\U0001faff]')
+
+
+def is_darkweb_spam(title: str, snippet: str = "") -> bool:
+    """Detects SEO-spam, phishing traps, and keyword-stuffed onion search results."""
+    if not title:
+        return True
+    # 1. Emoji stuffing (>= 3 emojis)
+    if len(EMOJI_RE.findall(title)) >= 3:
+        return True
+    # 2. Consecutive identical word repeats (e.g. tor tor tor, tor | tor | tor)
+    if re.search(r'\b([a-zA-Z0-9]{2,})\b(?:[\s|\-_,]+\1\b){2,}', title, re.IGNORECASE):
+        return True
+    # 3. High word frequency spam (e.g. 4+ occurrences of the same word in a title)
+    words = [w.lower() for w in re.findall(r'\b[a-zA-Z0-9]{2,}\b', title)]
+    if words:
+        counts = Counter(words)
+        if max(counts.values()) >= 4:
+            return True
+        if len(words) >= 6 and (max(counts.values()) / len(words) > 0.45) and max(counts.values()) >= 3:
+            return True
+    return False
+
+
+def _parse_ahmia_results(html: str, limit: int = 5, max_per_domain: int = 2) -> List[Dict[str, str]]:
+    soup = BeautifulSoup(html, "html.parser")
+    results = []
+    spam_candidates = []
+    overflow_domain_candidates = []
+    seen_urls = set()
+    domain_counts = Counter()
+
+    for item in soup.find_all("li", class_="result"):
+        a_tag = item.find("a")
+        p_tag = item.find("p")
+        cite_tag = item.find("cite")
+        if not a_tag:
+            continue
+
+        href = a_tag.get("href", "")
+        real_url = ""
+        if "redirect_url=" in href:
+            parsed = urllib.parse.urlparse(href)
+            qs = urllib.parse.parse_qs(parsed.query)
+            real_url = qs.get("redirect_url", [""])[0]
+        elif ".onion" in href:
+            real_url = href
+
+        if not real_url and cite_tag:
+            cite_text = cite_tag.get_text(strip=True)
+            if ".onion" in cite_text:
+                real_url = cite_text if cite_text.startswith("http") else f"http://{cite_text}"
+
+        if not real_url or ".onion" not in real_url or real_url in seen_urls:
+            continue
+
+        seen_urls.add(real_url)
+        title = " ".join(a_tag.get_text().split())
+        snippet = " ".join(p_tag.get_text().split()) if p_tag else ""
+
+        entry = {
+            "title": title or real_url,
+            "url": real_url,
+            "snippet": snippet,
+            "engine": "Ahmia (.onion)"
+        }
+
+        if is_darkweb_spam(title, snippet):
+            spam_candidates.append(entry)
+            continue
+
+        # Extract onion domain for diversity
+        parsed_url = urllib.parse.urlparse(real_url)
+        domain = parsed_url.netloc.lower() or parsed_url.path.split("/")[0].lower()
+
+        if domain_counts[domain] >= max_per_domain:
+            overflow_domain_candidates.append(entry)
+            continue
+
+        domain_counts[domain] += 1
+        results.append(entry)
+
+        if len(results) >= limit:
+            break
+
+    # If results are still fewer than limit, backfill with overflow domain candidates first
+    if len(results) < limit and overflow_domain_candidates:
+        for oc in overflow_domain_candidates:
+            results.append(oc)
+            if len(results) >= limit:
+                break
+
+    # If legitimate results were fewer than limit, backfill with non-spam candidates
+    if len(results) < limit and spam_candidates:
+        for sc in spam_candidates:
+            results.append(sc)
+            if len(results) >= limit:
+                break
+
+    return results
+
+
+def search_ahmia_onion(query: str, limit: int = 5) -> List[Dict[str, str]]:
+    """Queries Ahmia over Tor SOCKS5h to discover .onion hidden services."""
+    global _AHMIA_TOKEN
+    enforce_tor_gatekeeper()
+    s = requests.Session()
+    s.proxies = TOR_PROXIES
+    s.headers.update({"User-Agent": USER_AGENT})
+
+    words = query.split()
+    candidates = [query]
+    if len(words) > 2:
+        candidates.append(" ".join(words[:2]))
+
+    for cand_q in candidates:
+        params = {"q": cand_q, _AHMIA_TOKEN[0]: _AHMIA_TOKEN[1]}
+        try:
+            r = s.get("https://ahmia.fi/search/", params=params, timeout=15)
+            if r.status_code == 200:
+                results = _parse_ahmia_results(r.text, limit=limit)
+                if results:
+                    return results
+                soup_home = BeautifulSoup(r.text, "html.parser")
+                form = soup_home.find("form", id="searchForm")
+                if form:
+                    inp = form.find("input", type="hidden")
+                    if inp and inp.get("name") and inp.get("value"):
+                        new_token = (inp["name"], inp["value"])
+                        if new_token != _AHMIA_TOKEN:
+                            _AHMIA_TOKEN = new_token
+                            params = {"q": cand_q, _AHMIA_TOKEN[0]: _AHMIA_TOKEN[1]}
+                            r2 = s.get("https://ahmia.fi/search/", params=params, timeout=15)
+                            if r2.status_code == 200:
+                                results = _parse_ahmia_results(r2.text, limit=limit)
+                                if results:
+                                    return results
+        except Exception:
+            pass
+    return []
 
 
 def execute_search_cascade(query: str, limit: int = 5) -> Tuple[List[Dict[str, str]], str]:

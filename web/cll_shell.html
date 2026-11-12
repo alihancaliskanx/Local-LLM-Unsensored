@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CLL — Chat Local LLM (Qwen3-4B + Tor OPSEC)</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <style>
+    :root {
+      --bar-bg: #11111b;
+      --bar-surface: #1e1e2e;
+      --bar-border: #313244;
+      --bar-text: #cdd6f4;
+      --bar-subtext: #a6adc8;
+      --bar-green: #a6e3a1;
+      --bar-red: #f38ba8;
+      --bar-yellow: #f9e2af;
+      --bar-blue: #89b4fa;
+      --bar-mauve: #cba6f7;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: #09090b;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+    }
+    #cll-topbar {
+      height: 44px;
+      min-height: 44px;
+      width: 100%;
+      background: var(--bar-bg);
+      border-bottom: 1px solid var(--bar-border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px;
+      gap: 10px;
+      color: var(--bar-text);
+      font-size: 12px;
+      z-index: 9999;
+      user-select: none;
+    }
+    .cll-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: nowrap;
+    }
+    .cll-brand {
+      font-weight: 700;
+      font-size: 13px;
+      color: var(--bar-blue);
+      letter-spacing: 0.3px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding-right: 6px;
+      border-right: 1px solid var(--bar-border);
+    }
+    .cll-power-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all 0.15s ease;
+    }
+    .cll-power-btn.off {
+      background: rgba(243, 139, 168, 0.14);
+      color: var(--bar-red);
+      border-color: rgba(243, 139, 168, 0.4);
+    }
+    .cll-power-btn.off:hover {
+      background: var(--bar-red);
+      color: #11111b;
+    }
+    .cll-power-btn.on {
+      background: rgba(166, 227, 161, 0.15);
+      color: var(--bar-green);
+      border-color: rgba(166, 227, 161, 0.45);
+    }
+    .cll-power-btn.on:hover {
+      background: rgba(243, 139, 168, 0.2);
+      color: var(--bar-red);
+      border-color: var(--bar-red);
+    }
+    .cll-power-btn.loading {
+      background: rgba(249, 226, 175, 0.15);
+      color: var(--bar-yellow);
+      border-color: rgba(249, 226, 175, 0.45);
+      cursor: wait;
+    }
+    .cll-label {
+      color: var(--bar-subtext);
+      font-size: 11px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .cll-select {
+      background: var(--bar-surface);
+      color: var(--bar-text);
+      border: 1px solid var(--bar-border);
+      border-radius: 5px;
+      padding: 3px 7px;
+      font-size: 11.5px;
+      outline: none;
+      cursor: pointer;
+    }
+    .cll-select:focus {
+      border-color: var(--bar-blue);
+    }
+    .cll-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 8px;
+      border-radius: 5px;
+      background: var(--bar-surface);
+      border: 1px solid var(--bar-border);
+      font-family: monospace;
+      font-size: 11.5px;
+    }
+    .cll-badge.ok { color: var(--bar-green); }
+    .cll-badge.err { color: var(--bar-red); }
+    .cll-btn {
+      background: var(--bar-surface);
+      color: var(--bar-text);
+      border: 1px solid var(--bar-border);
+      border-radius: 5px;
+      padding: 4px 9px;
+      font-size: 11.5px;
+      cursor: pointer;
+      transition: all 0.15s;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .cll-btn:hover {
+      background: var(--bar-blue);
+      color: #11111b;
+      border-color: var(--bar-blue);
+    }
+    .cll-btn.danger:hover {
+      background: var(--bar-red);
+      color: #11111b;
+      border-color: var(--bar-red);
+    }
+    .cll-checkbox {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      cursor: pointer;
+      font-size: 11.5px;
+      color: var(--bar-subtext);
+      padding: 3px 6px;
+      border-radius: 5px;
+      background: var(--bar-surface);
+      border: 1px solid var(--bar-border);
+    }
+    .cll-checkbox input { cursor: pointer; }
+    #llama-ui-frame {
+      flex: 1;
+      width: 100%;
+      height: calc(100vh - 44px);
+      border: none;
+      display: block;
+      background: #09090b;
+    }
+  </style>
+</head>
+<body>
+  <header id="cll-topbar">
+    <div class="cll-group">
+      <div class="cll-brand">⚡ CLL</div>
+
+      <button id="llm-toggle-btn" class="cll-power-btn off" onclick="toggleLLM()" title="Yerel LLM Sunucusunu Aç / Kapat">
+        <span id="llm-dot">🔴</span>
+        <span id="llm-btn-text">LLM Kapalı (Aç)</span>
+      </button>
+
+      <label class="cll-label" title="Model Context / Token Sınırı">
+        Token Sınırı:
+        <select id="ctx-select" class="cll-select" onchange="onEngineParamChange()">
+          <option value="4096">4K (4096)</option>
+          <option value="8192">8K (8192)</option>
+          <option value="16384">16K (16384)</option>
+          <option value="24576">24K (24576)</option>
+          <option value="32768" selected>32K (32768 - Varsayılan)</option>
+          <option value="49152">48K (49152 - Tavan)</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="cll-group">
+      <label class="cll-label" title="Tor Web & .onion Arama Modu">
+        <select id="search-mode-select" class="cll-select" onchange="syncSearchSettings()">
+          <option value="auto">🔍 Tor Arama: Otonom</option>
+          <option value="deep" selected>🧠 Tor Arama: Derin Keşif (Ajan)</option>
+          <option value="always">🌐 Tor Arama: Her Zaman</option>
+          <option value="off">🔒 Tor Arama: Kapalı</option>
+        </select>
+      </label>
+
+      <label class="cll-checkbox" title="Sitelerin ve .onion sayfalarının tam metnini Tor üzerinden kazır">
+        <input type="checkbox" id="deep-read-check" checked onchange="syncSearchSettings()">
+        <span>📖 Derin Okuma</span>
+      </label>
+
+      <div id="tor-badge" class="cll-badge">🧅 Tor: Kontrol...</div>
+      <button id="newip-btn" class="cll-btn" onclick="rotateTorIP()" title="Yeni Tor Devresi ve Çıkış IP Adresi Al">🔄 Yeni IP</button>
+      <button class="cll-btn danger" onclick="clearAllChats(true)" title="Yerel LLM geçmiş sohbetlerini tarayıcıdan tamamen sil">🧹 Geçmişi Temizle</button>
+    </div>
+  </header>
+
+  <iframe id="llama-ui-frame" src="about:blank"></iframe>
+  <iframe src="http://127.0.0.1:8080/cll-wipe" style="display:none;width:0;height:0;border:0;"></iframe>
+  <iframe src="http://127.0.0.1:8088/cll-wipe" style="display:none;width:0;height:0;border:0;"></iframe>
+
+  <script>
+    let llmRunning = false;
+    let llmBusy = false;
+
+    async function wipeOriginStorage() {
+      try {
+        const keepFlag = localStorage.getItem('cll_initial_wipe_done_v1');
+        localStorage.clear();
+        sessionStorage.clear();
+        if (keepFlag) localStorage.setItem('cll_initial_wipe_done_v1', '1');
+        if (window.indexedDB && window.indexedDB.databases) {
+          const dbs = await window.indexedDB.databases();
+          for (const db of dbs) {
+            if (db.name) {
+              await new Promise((resolve) => {
+                const req = window.indexedDB.deleteDatabase(db.name);
+                req.onsuccess = resolve;
+                req.onerror = resolve;
+                req.onblocked = resolve;
+              });
+            }
+          }
+        }
+      } catch (e) {}
+    }
+
+    async function initApp() {
+      if (!localStorage.getItem('cll_initial_wipe_done_v1')) {
+        await wipeOriginStorage();
+        localStorage.setItem('cll_initial_wipe_done_v1', '1');
+      }
+      document.getElementById('llama-ui-frame').src = '/?raw=1';
+      await refreshStatus();
+      setInterval(refreshStatus, 4000);
+    }
+
+    async function clearAllChats(askConfirm) {
+      await wipeOriginStorage();
+      const frame = document.getElementById('llama-ui-frame');
+      if (frame && frame.contentWindow) {
+        try {
+          frame.contentWindow.localStorage.clear();
+          frame.contentWindow.sessionStorage.clear();
+        } catch (e) {}
+        frame.src = '/?raw=1&t=' + Date.now();
+      }
+    }
+
+    function updatePowerUI(running, starting, ctxVal, rVal) {
+      const btn = document.getElementById('llm-toggle-btn');
+      const dot = document.getElementById('llm-dot');
+      const txt = document.getElementById('llm-btn-text');
+
+      if (starting) {
+        btn.className = 'cll-power-btn loading';
+        dot.textContent = '🟡';
+        txt.textContent = 'İşleniyor...';
+        return;
+      }
+
+      llmRunning = running;
+      if (running) {
+        btn.className = 'cll-power-btn on';
+        dot.textContent = '🟢';
+        const k = Math.round((ctxVal || 16384) / 1024);
+        txt.textContent = `LLM Açık (${k}K) — Kapat`;
+      } else {
+        btn.className = 'cll-power-btn off';
+        dot.textContent = '🔴';
+        txt.textContent = 'LLM Kapalı (Aç)';
+      }
+    }
+
+    async function refreshStatus() {
+      if (llmBusy) return;
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+
+        updatePowerUI(data.llama_ready, false, data.ctx);
+
+        if (data.ctx) {
+          const ctxSel = document.getElementById('ctx-select');
+          if (ctxSel && String(data.ctx) !== ctxSel.value && data.llama_ready) {
+            ctxSel.value = String(data.ctx);
+          }
+        }
+
+        if (data.search_mode) {
+          const sSel = document.getElementById('search-mode-select');
+          if (sSel && document.activeElement !== sSel) sSel.value = data.search_mode;
+        }
+
+        const torBadge = document.getElementById('tor-badge');
+        if (data.tor_active) {
+          torBadge.className = 'cll-badge ok';
+          const ipText = data.tor_ip ? data.tor_ip : 'SOCKS5h Aktif';
+          torBadge.textContent = `🧅 Tor: ${ipText}`;
+        } else {
+          torBadge.className = 'cll-badge err';
+          torBadge.textContent = '🛑 Tor: Kapalı (Fail-Closed)';
+        }
+      } catch (e) {}
+    }
+
+    async function toggleLLM() {
+      if (llmBusy) return;
+      llmBusy = true;
+      updatePowerUI(llmRunning, true);
+
+      try {
+        if (llmRunning) {
+          await fetch('/api/llm/stop', { method: 'POST' });
+          updatePowerUI(false, false);
+        } else {
+          const ctx = parseInt(document.getElementById('ctx-select').value, 10);
+          const res = await fetch('/api/llm/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ctx })
+          });
+          const data = await res.json();
+          updatePowerUI(Boolean(data.ready), false, ctx);
+          const frame = document.getElementById('llama-ui-frame');
+          if (frame && frame.contentWindow) {
+            frame.contentWindow.location.reload();
+          }
+        }
+      } catch (e) {
+        updatePowerUI(false, false);
+      } finally {
+        llmBusy = false;
+        refreshStatus();
+      }
+    }
+
+    async function onEngineParamChange() {
+      if (!llmRunning || llmBusy) return;
+      llmBusy = true;
+      updatePowerUI(true, true);
+      try {
+        const ctx = parseInt(document.getElementById('ctx-select').value, 10);
+        const res = await fetch('/api/llm/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ctx })
+        });
+        const data = await res.json();
+        updatePowerUI(Boolean(data.ready), false, ctx);
+        const frame = document.getElementById('llama-ui-frame');
+        if (frame && frame.contentWindow) {
+          frame.contentWindow.location.reload();
+        }
+      } catch (e) {
+      } finally {
+        llmBusy = false;
+        refreshStatus();
+      }
+    }
+
+    async function syncSearchSettings() {
+      const search_mode = document.getElementById('search-mode-select').value;
+      const deep_read = document.getElementById('deep-read-check').checked;
+      try {
+        await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ search_mode, deep_read })
+        });
+      } catch (e) {}
+    }
+
+    async function rotateTorIP() {
+      const btn = document.getElementById('newip-btn');
+      btn.disabled = true;
+      btn.textContent = '⏳ Yenileniyor...';
+      try {
+        await fetch('/api/tor/newip', { method: 'POST' });
+        await refreshStatus();
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '🔄 Yeni IP';
+      }
+    }
+
+    initApp();
+  </script>
+</body>
+</html>

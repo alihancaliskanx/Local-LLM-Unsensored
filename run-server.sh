@@ -15,6 +15,7 @@ wait_for_gpu
 
 exec llama-server \
     "${COMMON_ARGS[@]}" \
+    --log-disable \
     -np "${PARALLEL_SLOTS}" \
     --host "${HOST}" \
     --port "${PORT}" \

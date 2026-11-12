@@ -53,6 +53,9 @@ When running `Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf` (~2.5 GB
 | `qwen-local` | Command entry point: `qwen-local server` and `qwen-local cli` |
 | `qwen.zsh` | Shell helper functions (`qwcli`, `qwfile`, `qwpipe`, `qwsearch`, `qwserver`, `qstop`) with context multipliers and reasoning controls |
 | `qwsearch.py` | Privacy-preserving, Tor-only web search synthesis engine with strict Fail-Closed OPSEC |
+| `qwen-web.py` | Local web agent server with Auto-Detect routing, streaming UI, and Prompt Injection Shield |
+| `page_reader.py` | Safe, Tor-only webpage and `.onion` text extractor with script/style stripping |
+| `security_guard.py` | Multi-layer prompt injection defense and strict XML untrusted-data sandboxing |
 | `rules.md` | System prompt rules configuring the model for direct developer assistant responses |
 | `run-server.sh` | Launches `llama-server` with Web UI and OpenAI-compatible API (`127.0.0.1:8080`) |
 | `run-cli.sh` | Launches interactive terminal chat via `llama-cli` (loads `rules.md` via `-sysf` if present) |
@@ -172,7 +175,26 @@ The shell integration provides commands with automatic context scaling, reasonin
   - `qwsearch --new-circuit "query"`: Requests a fresh Tor identity (SIGNAL NEWNYM) before querying.
 
 > [!NOTE]
-> The built-in `llama-server` Web UI (`http://127.0.0.1:8080`) is a static offline C++ interface without tool-calling hooks. Real-time Tor web search is driven through `qwsearch` in the CLI.
+> The built-in `llama-server` Web UI (`http://127.0.0.1:8080`) is a static offline C++ interface without tool-calling hooks. Real-time Tor web search is driven through `qwsearch` in the CLI or through the shielded `qwweb` interface.
+
+#### Chat Local LLM (`cll`) — Authentic llama-ui with Tor & Power Bar
+
+`cll` launches the gateway on `http://127.0.0.1:41625` and opens your default browser automatically:
+
+```bash
+cll
+```
+
+- **Authentic `llama-ui` Frontend:** Embeds the full upstream `llama-ui` interface (chat branching, message editing, file/document attachments, sampling parameters, token counters).
+- **Integrated Control Bar:** Manage LLM power state (On/Off), Token Limit (4K to 32K context), Reasoning levels (0..4), and Tor Web / `.onion` search modes directly from the page without popups.
+- **Strict Zero-Log Privacy:** `llama-server` is spawned with `--log-disable` and all process I/O is directed to `/dev/null`.
+- **Tor OPSEC & .onion Discovery:** Searches Ahmia for `.onion` queries, handles parallel scraping, and protects against prompt injection.
+- **Clear All History:** Includes an instant storage wipe button that deletes local origin data and IndexedDB databases.
+
+To stop the server:
+```bash
+cll stop
+```
 
 ### D. Direct Hugging Face Execution (Without Pre-downloading)
 
