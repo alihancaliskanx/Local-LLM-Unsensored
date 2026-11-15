@@ -45,6 +45,40 @@ REASONING_CONFIGS = {
 }
 
 
+def is_turkish_query(text: str) -> bool:
+    """Detects whether prompt is written in Turkish."""
+    if not text:
+        return False
+    t = text.lower()
+    if any(c in t for c in "çğıöşü"):
+        return True
+    tr_markers = [
+        r'\b(?:ve|veya|ile|için|nasıl|nedir|nelerdir|kimdir|neden|niçin|hangisi)\b',
+        r'\b(?:ara|araştır|bul|bana|cevap|ver|anlat|açıkla|yaz|özetle|çevir|karşılaştır)\b',
+        r'\b(?:olan|olarak|kadar|göre|sonra|önce|çünkü|fakat|ama|ancak)\b',
+        r'\b(?:parçalarım|yaparım|ederim|edilir|yapılır|parçalanır|incele|analiz)\b'
+    ]
+    for pattern in tr_markers:
+        if re.search(pattern, t):
+            return True
+    return False
+
+
+def check_is_turkish(prompt: str, force_tr: bool = False) -> bool:
+    """Determines whether output should be generated in Turkish."""
+    if force_tr:
+        return True
+    qw_lang = os.environ.get("QW_LANG", "").lower().strip()
+    if qw_lang in ("tr", "turkish"):
+        return True
+    if qw_lang in ("en", "english"):
+        return False
+    # If no prompt provided, default to Turkish
+    if not prompt or not prompt.strip():
+        return True
+    return is_turkish_query(prompt)
+
+
 def is_llama_server_running(host: str = "127.0.0.1", port: int = 8080) -> bool:
     """Checks whether llama-server is responsive on the OpenAI API port."""
     try:
@@ -309,8 +343,8 @@ def execute_inference(
 
     # Fallback to local CLI
     full_prompt = prompt
-    if system_prompt and not rules_path:
-        full_prompt = f"{system_prompt}\n\n{prompt}"
+    if system_prompt:
+        full_prompt = f"System Instructions:\n{system_prompt}\n\nUser Request:\n{prompt}"
     retcode, text = run_qwen_cli_fallback(
         full_prompt,
         rules_path=rules_path,
@@ -335,6 +369,7 @@ def main():
     p_file.add_argument("--keep", action="store_true", help="Preserve persistent copy of notes and report under ~/.local/share/local-llm/reports/")
     p_file.add_argument("--export", default=None, help="Custom export directory for reports and notes")
     p_file.add_argument("--web", "--search", dest="web_search", action="store_true", help="Perform Tor-isolated web research for project dependencies and best practices")
+    p_file.add_argument("--tr", action="store_true", help="Force output in Turkish (Türkçe yanıt zorla)")
 
     # 2. sec subcommand (qwsec)
     p_sec = subparsers.add_parser("sec", help="Security audit and vulnerability analysis")
@@ -344,12 +379,16 @@ def main():
     p_sec.add_argument("-r", "--reasoning", type=int, default=2, choices=[0, 1, 2, 3, 4], help="Reasoning level")
     p_sec.add_argument("--web", "--search", dest="web_search", action="store_true", help="Perform Tor-isolated web research for vulnerabilities affecting identified dependencies")
     p_sec.add_argument("--offline", action="store_true", help="Query local offline CVE advisory cache with zero network requests")
+    p_sec.add_argument("--keep", action="store_true", help="Preserve persistent copy of notes and report under ~/.local/share/local-llm/reports/")
+    p_sec.add_argument("--export", default=None, help="Custom export directory for reports and notes")
+    p_sec.add_argument("--tr", action="store_true", help="Force output in Turkish (Türkçe yanıt zorla)")
 
     # 3. pipe subcommand (qwpipe)
     p_pipe = subparsers.add_parser("pipe", help="Analyze input streamed through stdin pipe")
     p_pipe.add_argument("prompt", nargs="*", default=[], help="Prompt or task")
     p_pipe.add_argument("-c", "--ctx", type=int, default=32768, help="Context tokens (default: 32768)")
     p_pipe.add_argument("-r", "--reasoning", type=int, default=2, choices=[0, 1, 2, 3, 4], help="Reasoning level")
+    p_pipe.add_argument("--tr", action="store_true", help="Force output in Turkish (Türkçe yanıt zorla)")
 
     # 4. query subcommand (qwcli / qws)
     p_query = subparsers.add_parser("query", help="Direct single-turn query")
@@ -357,6 +396,7 @@ def main():
     p_query.add_argument("-c", "--ctx", type=int, default=32768, help="Context tokens (default: 32768)")
     p_query.add_argument("-r", "--reasoning", type=int, default=2, choices=[0, 1, 2, 3, 4], help="Reasoning level")
     p_query.add_argument("--rules", action="store_true", help="Enable system rules (prompts/cli_rules.md)")
+    p_query.add_argument("--tr", action="store_true", help="Force output in Turkish (Türkçe yanıt zorla)")
 
     args = parser.parse_args()
 
@@ -458,6 +498,13 @@ def main():
             "Directly analyze the provided content and answer the user request with detailed, structured explanations. "
             "Do not generate unnecessary shell commands or irrelevant commit messages. Present your direct analysis."
         )
+        is_tr = check_is_turkish(prompt_text, getattr(args, "tr", False))
+        if is_tr:
+            system_prompt += (
+                "\n\n🚨 DİL ZORUNLULUĞU (MANDATORY LANGUAGE DIRECTIVE):\n"
+                "Kullanıcı Türkçe talimat vermiştir. Yanıtınızın TAMAMINI (tüm başlıklar, açıklamalar, analizler ve sonuçlar) EKSİKSİZ TÜRKÇE olarak yazın.\n"
+                "Alıntılanan veya incelenen kaynaklar İngilizce olsa dahi bilgileri Türkçe açıklayın. Kullanıcı açıkça talep etmedikçe ASLA İngilizce yanıt vermeyin."
+            )
         full_user_prompt = (
             f"Request: {prompt_text}\n\n"
             f"{dep_context}"
@@ -472,8 +519,75 @@ def main():
         code_content = ""
         filename = ""
         prompt_text = " ".join(args.prompt) if args.prompt else ""
-        if args.target and (os.path.isfile(args.target) or os.path.isfile(os.path.expanduser(args.target))):
-            filename = os.path.abspath(os.path.expanduser(args.target))
+        raw_target = os.path.expanduser(args.target) if args.target else ""
+
+        # 1. Directory Target -> Full Project Security Analysis
+        if raw_target and os.path.isdir(raw_target):
+            target_dir = os.path.abspath(raw_target)
+            from cll.project_analyzer import explore_and_analyze_project
+            audit_prompt = prompt_text or "Perform a comprehensive security audit across all project modules. Identify real vulnerabilities (OWASP/CWE, injection, memory safety, auth bypass, broken crypto, insecure defaults) and summarize overall security posture."
+            is_tr = check_is_turkish(prompt_text, getattr(args, "tr", False))
+            if is_tr:
+                audit_prompt += (
+                    "\n\n🚨 DİL VE YANIT KURALLARI:\n"
+                    "- Raporun tamamını EKSİKSİZ TÜRKÇE olarak hazırla.\n"
+                    "- Proje modüllerini güvenlik ve mimari açıdan incele.\n"
+                    "- Gerçek açıklar varsa CWE, etki mekanizması ve düzeltme önerisi ver; temiz modülleri açıkça güvenli olarak belirt."
+                )
+
+            def chunk_inference_runner(p, system_prompt="", ctx=ctx, reasoning_level=reasoning_level, capture_output=True):
+                return execute_inference(
+                    p,
+                    system_prompt=system_prompt,
+                    ctx=ctx,
+                    reasoning_level=reasoning_level,
+                    capture_output=capture_output
+                )
+
+            explore_and_analyze_project(
+                project_path=target_dir,
+                user_prompt=audit_prompt,
+                inference_fn=chunk_inference_runner,
+                ctx=ctx,
+                reasoning_level=reasoning_level,
+                base_notes_dir="/tmp/local-llm",
+                keep_archive=getattr(args, "keep", False),
+                export_dir=getattr(args, "export", None),
+                web_research=getattr(args, "web_search", False)
+            )
+            sys.exit(0)
+
+        # 2. Check for shell glob expansion (e.g. `qwsec cll/*` where extra args are existing files)
+        extra_files = [os.path.abspath(os.path.expanduser(p)) for p in args.prompt if os.path.isfile(os.path.expanduser(p))]
+        if raw_target and os.path.isfile(raw_target) and extra_files:
+            all_files = [os.path.abspath(raw_target)] + extra_files
+            sys.stderr.write(f"[qwsec] Detected {len(all_files)} files from shell glob expansion. Scanning files sequentially...\n\n")
+            overall_ret = 0
+            is_tr = check_is_turkish(prompt_text, getattr(args, "tr", False))
+            sec_sys_prompt = (
+                "You are a rigorous, highly disciplined application security auditor and vulnerability researcher.\n"
+                "Your objective is to perform precise static analysis and identify REAL, EXPLOITABLE security vulnerabilities.\n"
+                "If the analyzed code is safe, state clearly that it is clean. Do not invent imaginary vulnerabilities."
+            )
+            if is_tr:
+                sec_sys_prompt += "\n\n🚨 DİL ZORUNLULUĞU: Yanıtı tamamen Türkçe olarak ver. Güvenliyse '✅ GÜVENLİ' belirt."
+
+            for idx, fpath in enumerate(all_files, 1):
+                try:
+                    with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                        fc = f.read()
+                    sys.stderr.write(f"[{idx}/{len(all_files)}] ── [Security Audit: {fpath} | Reasoning: {r_cfg['label']}] ──\n")
+                    f_prompt = f"Please perform a detailed security audit on the following code.\n\nTarget: {fpath}\n```\n{fc}\n```\n"
+                    r = execute_inference(f_prompt, system_prompt=sec_sys_prompt, ctx=ctx, reasoning_level=reasoning_level)
+                    if r != 0:
+                        overall_ret = r
+                    sys.stderr.write("\n" + "=" * 60 + "\n\n")
+                except Exception as e:
+                    sys.stderr.write(f"Error reading {fpath}: {e}\n")
+            sys.exit(overall_ret)
+
+        if raw_target and os.path.isfile(raw_target):
+            filename = os.path.abspath(raw_target)
             with open(filename, "r", encoding="utf-8", errors="replace") as f:
                 code_content = f.read()
         elif not sys.stdin.isatty():
@@ -483,18 +597,35 @@ def main():
         elif args.target:
             code_content = args.target
         else:
-            sys.stderr.write("Error: No file or code provided for security audit.\nUsage: qwsec <file> or cat <file> | qwsec\n")
+            sys.stderr.write("Error: No file or code provided for security audit.\nUsage: qwsec <file_or_dir> or cat <file> | qwsec\n")
             sys.exit(1)
 
         label = filename or "code snippet"
         sys.stderr.write(f"── [Security Audit & Vulnerability Scan: {label} | Reasoning: {r_cfg['label']}] ──\n")
 
-        rules_file = os.path.join(REPO_ROOT, "prompts", "cli_rules.md")
         system_prompt = (
-            "You are an elite application security auditor and vulnerability researcher. "
-            "Identify security vulnerabilities (OWASP/CWE, memory safety, injection, broken crypto, auth flaws, logic bugs). "
-            "For each finding, explain the exploit mechanism, severity level, and provide safe refactored code."
+            "You are a rigorous, highly disciplined application security auditor and vulnerability researcher.\n"
+            "Your objective is to perform precise static analysis and identify REAL, EXPLOITABLE security vulnerabilities.\n\n"
+            "CRITICAL AUDITING PRINCIPLES:\n"
+            "1. Grounded & Objective: If the analyzed code is a simple wrapper, shim, boilerplate, type definition, or has no vulnerabilities, "
+            "you MUST explicitly state that the file is safe and clean. Do NOT invent theoretical, imaginary, or non-existent CWEs.\n"
+            "2. No Irrelevant Contexts: Do NOT claim a local CLI script lacks web authentication, web sessions, or CSRF tokens. "
+            "Do NOT claim standard Python path resolution (like os.path.dirname(os.path.abspath(__file__))) is Path Traversal.\n"
+            "3. High-Confidence Vulnerabilities Only: Report only verified vulnerabilities with demonstrable exploit paths "
+            "(e.g., untrusted command injection, arbitrary code execution, real path traversal from user input, memory corruption, hardcoded secrets, broken crypto).\n"
+            "4. Format:\n"
+            "   - Status: State clearly whether vulnerabilities were detected: [GÜVENLİ / TEMİZ] or [ZAFİYET TESPİT EDİLDİ].\n"
+            "   - Findings: If vulnerable, list exact CWE, severity, exploit mechanism, and safe patch.\n"
+            "   - If clean, summarize why the code is safe (no attack surface, safe standard libraries) and DO NOT propose unnecessary code changes."
         )
+        is_tr = check_is_turkish(prompt_text, getattr(args, "tr", False))
+        if is_tr:
+            system_prompt += (
+                "\n\n🚨 DİL VE YANIT KURALLARI:\n"
+                "- Yanıtınızı EKSİKSİZ TÜRKÇE olarak verin.\n"
+                "- Kod güvenliyse açıkça '✅ GÜVENLİ: Herhangi bir güvenlik açığı tespit edilmemiştir' başlığı atın ve neden güvenli olduğunu açıklayın.\n"
+                "- Sahte açıklar veya gereksiz kod değişiklikleri uydurmayın."
+            )
         web_context = ""
         if getattr(args, "offline", False) and code_content:
             try:
@@ -526,7 +657,7 @@ def main():
         if prompt_text:
             user_prompt += f"\nAdditional Instructions: {prompt_text}\n"
 
-        code = execute_inference(user_prompt, system_prompt=system_prompt, ctx=ctx, reasoning_level=reasoning_level, rules_path=rules_file)
+        code = execute_inference(user_prompt, system_prompt=system_prompt, ctx=ctx, reasoning_level=reasoning_level)
         sys.exit(code)
 
     elif args.command == "pipe":
@@ -544,6 +675,12 @@ def main():
             "You are an expert system and text analysis assistant. "
             "Analyze the input data and answer the request directly with detailed explanations."
         )
+        is_tr = check_is_turkish(prompt_text, getattr(args, "tr", False))
+        if is_tr:
+            system_prompt += (
+                "\n\n🚨 DİL ZORUNLULUĞU (MANDATORY LANGUAGE DIRECTIVE):\n"
+                "Kullanıcı Türkçe talimat vermiştir. Yanıtınızı tamamen Türkçe olarak verin."
+            )
         user_prompt = f"Request: {prompt_text}\n\nInput:\n```\n{input_data}\n```"
         code = execute_inference(user_prompt, system_prompt=system_prompt, ctx=ctx, reasoning_level=reasoning_level)
         sys.exit(code)
@@ -551,8 +688,13 @@ def main():
     elif args.command == "query":
         prompt_text = " ".join(args.prompt)
         rules_path = os.path.join(REPO_ROOT, "prompts", "cli_rules.md") if args.rules else None
+        is_tr = check_is_turkish(prompt_text, getattr(args, "tr", False))
+        system_prompt = (
+            "🚨 DİL ZORUNLULUĞU (MANDATORY LANGUAGE DIRECTIVE):\nKullanıcıya tamamen Türkçe olarak yanıt verin."
+            if is_tr else ""
+        )
         sys.stderr.write(f"── [Qwen3-4B | Max Tokens: {ctx} ({ctx // 1024}k) | Reasoning: {r_cfg['label']} ({r_cfg['level']})] ──\n")
-        code = execute_inference(prompt_text, ctx=ctx, reasoning_level=reasoning_level, rules_path=rules_path)
+        code = execute_inference(prompt_text, system_prompt=system_prompt, ctx=ctx, reasoning_level=reasoning_level, rules_path=rules_path)
         sys.exit(code)
 
 

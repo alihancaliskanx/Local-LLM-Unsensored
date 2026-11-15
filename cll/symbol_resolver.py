@@ -48,7 +48,7 @@ def extract_includes_and_imports(content: str, ext: str) -> List[str]:
         # Match #include "..." (local headers) and #include <libraries/...>
         matches = re.findall(r'#\s*include\s*["<]([a-zA-Z0-9_./\-]+)[">]', content)
         for m in matches:
-            # Skip standard library headers without extension or in sys dirs
+            # Skip compiler/system STL headers without extensions (e.g. <vector>, <string>) to keep context local
             if m.startswith(("std", "sys/", "net/", "arpa/", "bits/")) or "." not in os.path.basename(m):
                 continue
             dependencies.append(m)
@@ -99,16 +99,17 @@ def resolve_dependency_filepath(dep_str: str, current_file_path: str, project_ro
             return cand3
 
     # 4. For Python, convert dots to path (e.g. cll.security -> cll/security.py or cll/__init__.py)
-    py_rel = dep_str.replace(".", os.sep)
-    for base in (project_root, current_dir):
-        # Direct .py file
-        cand_py = os.path.normpath(os.path.join(base, py_rel + ".py"))
-        if os.path.isfile(cand_py):
-            return cand_py
-        # Package directory with __init__.py
-        cand_init = os.path.normpath(os.path.join(base, py_rel, "__init__.py"))
-        if os.path.isfile(cand_init):
-            return cand_init
+    if not dep_str.endswith((".h", ".hpp", ".c", ".cpp", ".cc", ".cxx")):
+        py_rel = dep_str.replace(".", os.sep)
+        for base in (project_root, current_dir):
+            # Direct .py file
+            cand_py = os.path.normpath(os.path.join(base, py_rel + ".py"))
+            if os.path.isfile(cand_py):
+                return cand_py
+            # Package directory with __init__.py
+            cand_init = os.path.normpath(os.path.join(base, py_rel, "__init__.py"))
+            if os.path.isfile(cand_init):
+                return cand_init
 
     return None
 
@@ -132,12 +133,24 @@ def extract_symbols_from_cpp_header(content: str) -> List[Dict[str, str]]:
         body = match.group(3)
 
         # Extract public member function signatures and variables
+        current_vis = "public" if kind == "struct" else "private"
         members = []
-        for line in body.splitlines():
-            line_s = line.strip()
-            # Match member variable or method declaration ending in ';'
-            if line_s and not line_s.startswith(("private:", "protected:", "public:")) and ";" in line_s:
-                decl = line_s.split(";")[0].strip()
+
+        # Tag access specifiers and split body by semicolons / section tags
+        tagged = re.sub(r'\b(public|protected|private)\s*:', r';\g<1>_section;', body)
+        for chunk in tagged.split(";"):
+            chunk_s = chunk.strip()
+            if not chunk_s:
+                continue
+            if chunk_s == "public_section":
+                current_vis = "public"
+                continue
+            elif chunk_s in ("private_section", "protected_section"):
+                current_vis = "private"
+                continue
+
+            if current_vis == "public":
+                decl = " ".join(chunk_s.split())
                 if len(decl) < 120 and "(" in decl:
                     members.append(decl)
                 elif len(decl) < 80 and not decl.startswith(("#", "//", "/*")):

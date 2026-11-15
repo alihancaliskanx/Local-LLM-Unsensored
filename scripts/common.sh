@@ -6,7 +6,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 MODEL_FILE="Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf"
 MODEL_PATH="${MODEL_PATH:-${REPO_ROOT}/${MODEL_FILE}}"
 GPU_LAYERS="${NGL:-auto}"
-FIT_MARGIN="${FIT_TARGET:-512}"
+FIT_MARGIN="${FIT_TARGET:-768}"
 CTX_SIZE="${CTX:-32768}"
 THREADS="${THREADS:-6}"
 

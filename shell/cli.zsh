@@ -192,3 +192,12 @@ qwhost() {
 
 alias qwh='qwhost'
 alias qwonion='qwhost'
+
+# Turkish Command Aliases
+alias qwdosya='qwfile'
+alias qwara='qwsearch'
+alias qwgüvenlik='qwsec'
+alias qwboru='qwpipe'
+alias qwsunucu='qwserver'
+alias qwdoktor='qwdoctor'
+alias qwservis='qwhost'

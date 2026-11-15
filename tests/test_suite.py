@@ -113,6 +113,20 @@ class TestSymbolResolverModule(unittest.TestCase):
         self.assertIn("Vector3f", names)
         self.assertIn("Mode", names)
 
+    def test_cpp_visibility_specifiers(self):
+        code = """
+        class SecurityBox {
+        private:
+            int secret;
+        public:
+            void unlock();
+        };
+        """
+        symbols = symbol_resolver.extract_symbols_from_cpp_header(code)
+        self.assertEqual(len(symbols), 1)
+        self.assertIn("unlock()", symbols[0]["signature"])
+        self.assertNotIn("secret", symbols[0]["signature"])
+
 
 class TestManPages(unittest.TestCase):
     def test_qwfile_manpage_structure(self):
@@ -421,6 +435,31 @@ class TestGuides(unittest.TestCase):
             content = f.read()
         self.assertIn("Zero-Leak Codebase Search", content)
         self.assertIn("socks5h://127.0.0.1:9050", content)
+
+
+class TestStreamManagerAndResumption(unittest.TestCase):
+    def test_stream_manager_lifecycle(self):
+        from cll import server as cll_server
+        manager = cll_server.StreamManager()
+        s = manager.get_or_create("conv-test-1")
+        self.assertEqual(s.conv_id, "conv-test-1")
+        self.assertFalse(s.done)
+
+        s.append_chunk('data: {"choices":[{"delta":{"content":"Hi"}}]}\n\n')
+        self.assertTrue(s.total_bytes > 0)
+        self.assertEqual(len(s.raw_chunks), 1)
+
+        s.mark_done()
+        self.assertTrue(s.done)
+        self.assertEqual(manager.get("conv-test-1"), s)
+
+    def test_turkish_language_detection(self):
+        from cll import inference as cll_inference
+        self.assertTrue(cll_inference.is_turkish_query("Bu kodu detaylı açıkla"))
+        self.assertTrue(cll_inference.is_turkish_query("mimariyi karşılaştır"))
+        self.assertTrue(cll_inference.is_turkish_query("nedir ve nasıl çalışır"))
+        self.assertFalse(cll_inference.is_turkish_query("Analyze this class hierarchy"))
+        self.assertFalse(cll_inference.is_turkish_query("Extract all functions"))
 
 
 if __name__ == "__main__":

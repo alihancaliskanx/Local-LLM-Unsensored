@@ -449,6 +449,7 @@ async def api_llm_start(request: Request):
     env = os.environ.copy()
     env["CTX"] = str(ctx)
     env["PORT"] = "8080"
+    env["FIT_TARGET"] = os.environ.get("FIT_TARGET", "768")
 
     cmd = [
         os.path.join(BASE_DIR, "qwen-local"),
@@ -551,12 +552,133 @@ async def proxy_pass_through(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+# In-memory stream cache for authentic llama-ui SSE resumption
+class StreamSession:
+    def __init__(self, conv_id: str):
+        self.conv_id = conv_id
+        self.raw_chunks: List[str] = []
+        self.total_bytes = 0
+        self.done = False
+        self.error: Optional[str] = None
+        self.created_at = time.time()
+        self.updated_at = time.time()
+        self.subscribers: List[asyncio.Queue] = []
+
+    def append_chunk(self, chunk: str):
+        self.raw_chunks.append(chunk)
+        self.total_bytes += len(chunk.encode("utf-8"))
+        self.updated_at = time.time()
+        for q in list(self.subscribers):
+            try:
+                q.put_nowait(chunk)
+            except Exception:
+                pass
+
+    def mark_done(self):
+        self.done = True
+        self.updated_at = time.time()
+        for q in list(self.subscribers):
+            try:
+                q.put_nowait(None)
+            except Exception:
+                pass
+
+
+class StreamManager:
+    def __init__(self, max_sessions: int = 50):
+        self.sessions: Dict[str, StreamSession] = {}
+        self.max_sessions = max_sessions
+
+    def get_or_create(self, conv_id: str) -> StreamSession:
+        self.cleanup_old_sessions()
+        if conv_id not in self.sessions:
+            self.sessions[conv_id] = StreamSession(conv_id)
+        return self.sessions[conv_id]
+
+    def get(self, conv_id: str) -> Optional[StreamSession]:
+        return self.sessions.get(conv_id)
+
+    def cleanup_old_sessions(self, max_age_seconds: float = 600):
+        now = time.time()
+        expired = [cid for cid, s in self.sessions.items() if (now - s.updated_at > max_age_seconds)]
+        for cid in expired:
+            del self.sessions[cid]
+        if len(self.sessions) > self.max_sessions:
+            sorted_sessions = sorted(self.sessions.items(), key=lambda kv: kv[1].updated_at)
+            for cid, _ in sorted_sessions[:len(self.sessions) - self.max_sessions]:
+                del self.sessions[cid]
+
+
+STREAM_MANAGER = StreamManager()
+
+
+# SSE Resumption Endpoints for llama-ui
+@app.get("/v1/stream")
+@app.post("/v1/stream")
+async def resume_stream_handler(request: Request):
+    conv_id = request.query_params.get("conv_id") or request.headers.get("x-conversation-id") or request.headers.get("X-Conversation-Id")
+    try:
+        from_bytes = int(request.query_params.get("from", 0))
+    except (ValueError, TypeError):
+        from_bytes = 0
+
+    session = STREAM_MANAGER.get(conv_id) if conv_id else None
+
+    async def stream_resume_generator():
+        if not session:
+            yield "data: [DONE]\n\n"
+            return
+
+        accumulated = 0
+        replayed = []
+        for c in session.raw_chunks:
+            c_len = len(c.encode("utf-8"))
+            if accumulated + c_len > from_bytes:
+                replayed.append(c)
+            accumulated += c_len
+
+        for c in replayed:
+            yield c
+
+        if session.done:
+            if not any("[DONE]" in c for c in replayed):
+                yield "data: [DONE]\n\n"
+            return
+
+        sub_q: asyncio.Queue = asyncio.Queue()
+        session.subscribers.append(sub_q)
+        try:
+            while True:
+                chunk = await sub_q.get()
+                if chunk is None:
+                    break
+                yield chunk
+            yield "data: [DONE]\n\n"
+        finally:
+            if sub_q in session.subscribers:
+                session.subscribers.remove(sub_q)
+
+    return StreamingResponse(stream_resume_generator(), media_type="text/event-stream")
+
+
+@app.post("/v1/streams/lookup")
+async def streams_lookup_handler(request: Request):
+    try:
+        body = await request.json()
+        requested_ids = body.get("conversation_ids", [])
+        active_ids = [cid for cid, s in STREAM_MANAGER.sessions.items() if not s.done and cid in requested_ids]
+        return JSONResponse(active_ids)
+    except Exception:
+        return JSONResponse([])
+
+
 # OpenAI Chat Completion Interceptor with Tor Web / .onion Search
 async def completion_stream(
     payload: dict,
     search_summary_md: Optional[str] = None,
     verified_mode: bool = False,
-    query_lang: str = "tr"
+    query_lang: str = "tr",
+    session: Optional[StreamSession] = None
 ) -> AsyncGenerator[str, None]:
     if search_summary_md:
         initial_chunk = {
@@ -566,7 +688,10 @@ async def completion_stream(
                 "finish_reason": None
             }]
         }
-        yield f"data: {json.dumps(initial_chunk)}\n\n"
+        c_str = f"data: {json.dumps(initial_chunk)}\n\n"
+        if session:
+            session.append_chunk(c_str)
+        yield c_str
 
     queue: asyncio.Queue = asyncio.Queue()
     loop = asyncio.get_running_loop()
@@ -590,95 +715,67 @@ async def completion_stream(
 
     threading.Thread(target=_stream_worker, daemon=True).start()
 
-    if not verified_mode:
-        while True:
-            item = await queue.get()
-            if item is None:
-                break
-            if isinstance(item, Exception):
-                err_chunk = {
-                    "choices": [{
-                        "index": 0,
-                        "delta": {"content": f"\n\n**Error:** LLM connection error: {str(item)}"},
-                        "finish_reason": "error"
-                    }]
-                }
-                yield f"data: {json.dumps(err_chunk)}\n\n"
-                yield "data: [DONE]\n\n"
-                break
-            if item.startswith("data: "):
-                yield f"{item}\n\n"
-                if item[6:].strip() == "[DONE]":
-                    break
-    else:
-        full_text_parts = []
-        has_error = None
-        while True:
-            item = await queue.get()
-            if item is None:
-                break
-            if isinstance(item, Exception):
-                has_error = item
-                break
-            if item.startswith("data: "):
-                raw_payload = item[6:].strip()
-                if raw_payload == "[DONE]":
-                    break
-                try:
-                    chunk_obj = json.loads(raw_payload)
-                    delta_content = chunk_obj.get("choices", [{}])[0].get("delta", {}).get("content", "")
-                    if delta_content:
-                        full_text_parts.append(delta_content)
-                except Exception:
-                    pass
-
-        if has_error:
+    while True:
+        item = await queue.get()
+        if item is None:
+            break
+        if isinstance(item, Exception):
             err_chunk = {
                 "choices": [{
                     "index": 0,
-                    "delta": {"content": f"\n\n**Error:** LLM connection error: {str(has_error)}"},
+                    "delta": {"content": f"\n\n**Error:** LLM connection error: {str(item)}"},
                     "finish_reason": "error"
                 }]
             }
-            yield f"data: {json.dumps(err_chunk)}\n\n"
-            yield "data: [DONE]\n\n"
+            c_str = f"data: {json.dumps(err_chunk)}\n\n"
+            if session:
+                session.append_chunk(c_str)
+            yield c_str
+            done_str = "data: [DONE]\n\n"
+            if session:
+                session.append_chunk(done_str)
+                session.error = str(item)
+                session.mark_done()
+            yield done_str
             return
 
-        full_text = "".join(full_text_parts)
-        verified_text = verifier.correct_terminology_and_logic(full_text, lang=query_lang)
+        if item.startswith("data: "):
+            raw_payload = item[6:].strip()
+            c_str = f"{item}\n\n"
+            if session:
+                session.append_chunk(c_str)
+            yield c_str
+            if raw_payload == "[DONE]":
+                break
 
-        # Progressive slice streaming to UI
-        chunk_size = 40
-        for i in range(0, len(verified_text), chunk_size):
-            slice_text = verified_text[i:i + chunk_size]
-            c = {
-                "choices": [{
-                    "index": 0,
-                    "delta": {"content": slice_text},
-                    "finish_reason": None
-                }]
-            }
-            yield f"data: {json.dumps(c)}\n\n"
-
-        done_chunk = {
-            "choices": [{
-                "index": 0,
-                "delta": {},
-                "finish_reason": "stop"
-            }]
-        }
-        yield f"data: {json.dumps(done_chunk)}\n\n"
-        yield "data: [DONE]\n\n"
+    if session:
+        session.mark_done()
 
 
 @app.post("/v1/chat/completions")
 async def chat_completions_handler(request: Request):
+    conv_id = (
+        request.headers.get("x-conversation-id")
+        or request.headers.get("X-Conversation-Id")
+        or request.query_params.get("conv_id")
+        or f"stream_{int(time.time() * 1000)}"
+    )
+    session = STREAM_MANAGER.get_or_create(conv_id)
+
     if not is_llama_running():
         async def offline_stream():
-            msg = "⚠️ **Local LLM Offline.**\n\nPlease click **'LLM Offline (Start)'** on the top control bar to launch the model."
+            msg = (
+                "⚠️ **Local LLM Çevrimdışı (Offline).**\n\n"
+                "Model henüz başlatılmamış. Modeli aktif hale getirmek için lütfen üst paneldeki **'LLM Offline (Start)'** düğmesine tıklayın."
+            )
             chunk = {"choices": [{"index": 0, "delta": {"content": msg}, "finish_reason": "stop"}]}
-            yield f"data: {json.dumps(chunk)}\n\n"
-            yield "data: [DONE]\n\n"
+            c1 = f"data: {json.dumps(chunk)}\n\n"
+            c2 = "data: [DONE]\n\n"
+            session.append_chunk(c1)
+            session.append_chunk(c2)
+            session.mark_done()
+            yield c1
+            yield c2
         return StreamingResponse(offline_stream(), media_type="text/event-stream")
 
     data = await request.json()
@@ -930,7 +1027,7 @@ async def chat_completions_handler(request: Request):
                     m["content"] += f"\n\nNote: Answer directly using internal knowledge. Never state that you lack web access.{lang_prompt}"
 
     return StreamingResponse(
-        completion_stream(data, search_summary_md, verified_mode=VERIFIED_MODE, query_lang=query_lang),
+        completion_stream(data, search_summary_md, verified_mode=VERIFIED_MODE, query_lang=query_lang, session=session),
         media_type="text/event-stream"
     )
 

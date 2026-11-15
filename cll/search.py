@@ -20,6 +20,7 @@ import xml.etree.ElementTree as ET
 try:
     import requests
     from bs4 import BeautifulSoup
+    from cll.page_reader import fetch_page_text_tor
 except ImportError as e:
     sys.stderr.write(f"[OPSEC ERROR] Missing required Python package: {e}\n")
     sys.exit(1)
@@ -159,7 +160,10 @@ def is_result_relevant(query: str, title: str, snippet: str, url: str = "") -> b
     core_keywords = {w for w in query_words if w not in stopwords}
     if not core_keywords:
         return True
-    return any(kw in text for kw in core_keywords)
+    matches = sum(1 for kw in core_keywords if re.search(r'\b' + re.escape(kw) + r'\b', text, re.IGNORECASE))
+    if len(core_keywords) >= 3:
+        return matches >= 2
+    return matches >= 1
 
 
 def search_duckduckgo_html(query: str, limit: int = 5) -> List[Dict[str, str]]:
@@ -644,7 +648,7 @@ def execute_search_cascade(query: str, limit: int = 5, with_chaff: bool = False)
                 results = search_bing(condensed_q, limit=limit)
 
     # Enrich with GitHub developer repositories over Tor only if query targets software/hardware/tools/exploits
-    is_dev_query = bool(re.search(r'\b(github|repo|git|code|library|pkg|package|sdk|api|cli|tool|script|exploit|cve|driver|firmware|protocol|implementation)\b', query, re.IGNORECASE))
+    is_dev_query = bool(re.search(r'\b(github|repo|git|code|library|pkg|package|sdk|api|cli|tool|script|exploit|cve|driver|firmware|protocol|implementation|ekf|fusion|drone|uav|dronecan|uavcan|mavlink|ardupilot|px4|navigation|sensor)\b', query, re.IGNORECASE))
     if is_dev_query:
         gh_results = search_github_repositories(query, limit=2)
         if gh_results:
@@ -656,15 +660,16 @@ def execute_search_cascade(query: str, limit: int = 5, with_chaff: bool = False)
 
     wiki = fetch_wikipedia_summary(query)
     if wiki and len(results) < limit:
-        existing_urls = {r.get("url") for r in results}
-        if wiki.get("url") not in existing_urls:
-            results.append(wiki)
-            existing_urls.add(wiki.get("url"))
-            # Extract primary authoritative citations from Wikipedia References
-            for ref in extract_wikipedia_references(wiki.get("url"), limit=2):
-                if ref.get("url") not in existing_urls and len(results) < limit:
-                    results.append(ref)
-                    existing_urls.add(ref.get("url"))
+        if is_result_relevant(query, wiki.get("title", ""), wiki.get("snippet", ""), wiki.get("url", "")):
+            existing_urls = {r.get("url") for r in results}
+            if wiki.get("url") not in existing_urls:
+                results.append(wiki)
+                existing_urls.add(wiki.get("url"))
+                # Extract primary authoritative citations from Wikipedia References
+                for ref in extract_wikipedia_references(wiki.get("url"), limit=2):
+                    if ref.get("url") not in existing_urls and len(results) < limit:
+                        results.append(ref)
+                        existing_urls.add(ref.get("url"))
 
     # Academic ArXiv paper discovery for scientific/technical queries
     is_academic = bool(re.search(r'\b(physics|quantum|nuclear|fission|fusion|reaction|mechanics|theory|algorithm|cryptography|protocol|biology|chemistry|paper|equation)\b', query, re.IGNORECASE))
@@ -823,6 +828,8 @@ def main():
     parser.add_argument("--leak-test", action="store_true", help="Audit Tor circuit and verify IP via check.torproject.org")
     parser.add_argument("--new-circuit", action="store_true", help="Request a new Tor identity/circuit before searching")
     parser.add_argument("--chaff", "--decoy", action="store_true", help="Emit random decoy queries over Tor for traffic analysis resistance")
+    parser.add_argument("--deep", action="store_true", default=True, help="Deep-read top search result pages over Tor (default: True)")
+    parser.add_argument("--no-deep", dest="deep", action="store_false", help="Disable deep page reading, use search snippets only")
 
     args = parser.parse_args()
 
@@ -870,6 +877,29 @@ def main():
         sys.exit(0)
 
     context = format_markdown_context(query_str, results, engine_used)
+
+    if args.deep:
+        deep_sections = []
+        targets = []
+        for r in results:
+            u = r.get("url", "")
+            if u.startswith("http") and not any(u.lower().endswith(ext) for ext in (".pdf", ".zip", ".tar.gz", ".png", ".jpg", ".exe")):
+                targets.append((r.get("title", ""), u))
+                if len(targets) >= 2:
+                    break
+        for title, u in targets:
+            try:
+                sys.stderr.write(f"[qwsearch] Deep reading source over Tor: {u[:65]}...\n")
+                sys.stderr.flush()
+                scraped = fetch_page_text_tor(u, max_chars=4000)
+                if scraped and scraped.get("text"):
+                    clean_text = scraped["text"].strip()
+                    if len(clean_text) > 100:
+                        deep_sections.append(f"### Deep Source Content: {title} ({u})\n```\n{clean_text}\n```")
+            except Exception:
+                pass
+        if deep_sections:
+            context += "\n\n" + "\n\n".join(deep_sections)
 
     if args.raw:
         print(context)

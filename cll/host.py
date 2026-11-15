@@ -54,7 +54,7 @@ def get_control_connection() -> socket.socket:
     res = s.recv(1024).decode("utf-8", errors="ignore")
     if "250 OK" not in res:
         sys.stderr.write(f"Error: Tor Control Port authentication failed: {res.strip()}\n")
-        sys.stderr.write("Hint: Ensure your user is in the 'tor' group: 'sudo usermod -aG tor $USER' and log back in.\n")
+        sys.stderr.write("Hint: If /var/lib/tor is missing group permissions, run: sudo chmod 0750 /var/lib/tor\n")
         sys.exit(1)
     return s
 
@@ -221,6 +221,10 @@ def backup_keys(dest: Optional[str] = None):
 
 
 def main():
+    # Allow shorthand 'qwhost 41625' -> 'qwhost start 41625'
+    if len(sys.argv) > 1 and sys.argv[1].isdigit():
+        sys.argv.insert(1, "start")
+
     parser = argparse.ArgumentParser(
         description="qwhost — Tor Onion Service Host & Key Persistence Manager",
         epilog="Guarantees that your .onion address stays permanent across computer restarts."
