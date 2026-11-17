@@ -7,10 +7,13 @@ source "${SCRIPT_DIR}/scripts/common.sh"
 
 MODEL_REPO="mradermacher/Huihui-Qwen3-4B-Instruct-2507-abliterated-i1-GGUF"
 COMMAND_NAME="qwen-local"
+TORSEARCH_NAME="torsearch"
 BIN_DIR="${BIN_DIR:-${HOME}/.local/bin}"
 MAN_DIR="${MAN_DIR:-${HOME}/.local/share/man/man1}"
 TARGET="${SCRIPT_DIR}/${COMMAND_NAME}"
 LINK="${BIN_DIR}/${COMMAND_NAME}"
+TORSEARCH_TARGET="${SCRIPT_DIR}/${TORSEARCH_NAME}"
+TORSEARCH_LINK="${BIN_DIR}/${TORSEARCH_NAME}"
 LEGACY_LINK="${BIN_DIR}/glm"
 
 usage() {
@@ -21,10 +24,10 @@ Without arguments, installs everything needed to run '${COMMAND_NAME}'. Steps th
 already done are skipped, so it is safe to run again:
   1. llama-cpp and a ggml GPU backend via pacman (asks for sudo)
   2. ${MODEL_FILE} from ${MODEL_REPO} (resumes a partial download)
-  3. a '${COMMAND_NAME}' link in ${BIN_DIR}
+  3. '${COMMAND_NAME}' and '${TORSEARCH_NAME}' links in ${BIN_DIR}
   4. manual pages (man1) linked into ${MAN_DIR}
 
-  --uninstall   Remove '${COMMAND_NAME}' and manpage links. Packages and the model are kept.
+  --uninstall   Remove '${COMMAND_NAME}', '${TORSEARCH_NAME}', and manpage links. Packages and the model are kept.
 
 Environment:
   BACKEND      cuda or vulkan (default: cuda if nvidia-smi exists, otherwise vulkan)
@@ -122,6 +125,17 @@ link_command() {
         echo "Command: linked ${LINK} -> ${TARGET}"
     fi
 
+    if [[ -L "${TORSEARCH_LINK}" && "$(readlink -f "${TORSEARCH_LINK}")" == "${TORSEARCH_TARGET}" ]]; then
+        echo "Command: already linked at ${TORSEARCH_LINK}"
+    elif [[ -e "${TORSEARCH_LINK}" || -L "${TORSEARCH_LINK}" ]]; then
+        ln -sf "${TORSEARCH_TARGET}" "${TORSEARCH_LINK}"
+        echo "Command: linked ${TORSEARCH_LINK} -> ${TORSEARCH_TARGET}"
+    else
+        mkdir -p "${BIN_DIR}"
+        ln -s "${TORSEARCH_TARGET}" "${TORSEARCH_LINK}"
+        echo "Command: linked ${TORSEARCH_LINK} -> ${TORSEARCH_TARGET}"
+    fi
+
     case ":${PATH}:" in
         *":${BIN_DIR}:"*) ;;
         *) echo "Warning: ${BIN_DIR} is not in PATH; add it to run '${COMMAND_NAME}' from any directory." >&2 ;;
@@ -164,6 +178,11 @@ unlink_command() {
     if is_our_link; then
         rm "${LINK}"
         echo "Command: removed ${LINK}"
+        removed=1
+    fi
+    if [[ -L "${TORSEARCH_LINK}" && "$(readlink -f "${TORSEARCH_LINK}")" == "${TORSEARCH_TARGET}" ]]; then
+        rm "${TORSEARCH_LINK}"
+        echo "Command: removed ${TORSEARCH_LINK}"
         removed=1
     fi
     if [[ -L "${LEGACY_LINK}" ]]; then

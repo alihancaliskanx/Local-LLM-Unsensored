@@ -13,6 +13,9 @@ require_model
 require_binary llama-server
 wait_for_gpu
 
+PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}" LLAMA_SERVER_URL="http://${HOST}:${PORT}" \
+    python3 -m cll.opencode_bridge >/dev/null 2>&1 &
+
 exec llama-server \
     "${COMMON_ARGS[@]}" \
     --log-disable \

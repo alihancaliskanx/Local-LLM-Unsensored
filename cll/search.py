@@ -21,6 +21,7 @@ try:
     import requests
     from bs4 import BeautifulSoup
     from cll.page_reader import fetch_page_text_tor
+    from cll import security as security_guard
 except ImportError as e:
     sys.stderr.write(f"[OPSEC ERROR] Missing required Python package: {e}\n")
     sys.exit(1)
@@ -620,8 +621,29 @@ def execute_search_cascade(query: str, limit: int = 5, with_chaff: bool = False)
     if with_chaff:
         send_chaff_query()
 
+    wants_onion = bool(re.search(r'(\.onion|\bonion\b|hidden\s+service|dark\s*web|ahmia)', query, re.IGNORECASE))
+    results = []
     engine_used = "DuckDuckGo"
-    results = search_duckduckgo_html(query, limit=limit)
+
+    if wants_onion:
+        onion_clean = re.sub(r'\b(onion|hidden\s+service|dark\s*web|ahmia|find|search|links?|urls?)\b', ' ', query, flags=re.IGNORECASE).strip()
+        onion_q = " ".join(onion_clean.split()) or query
+        results = search_ahmia_onion(onion_q, limit=limit)
+        if results:
+            engine_used = "Ahmia (.onion)"
+
+    if len(results) < limit:
+        ddg_res = search_duckduckgo_html(query, limit=limit - len(results))
+        if ddg_res:
+            if not results:
+                engine_used = "DuckDuckGo"
+            else:
+                engine_used = f"{engine_used} + DuckDuckGo"
+            existing = {r.get("url") for r in results}
+            for item in ddg_res:
+                if item.get("url") not in existing:
+                    results.append(item)
+                    existing.add(item.get("url"))
 
     if not results:
         engine_used = "Bing (Tor Fallback)"
@@ -684,16 +706,18 @@ def execute_search_cascade(query: str, limit: int = 5, with_chaff: bool = False)
 
 
 def format_markdown_context(query: str, results: List[Dict[str, str]], engine: str) -> str:
-    """Formats search results as clean Markdown context for downstream consumption."""
+    """Formats search results as clean Markdown context with prompt-injection sanitization."""
     lines = [
         f"### Web Search Context (OPSEC: Tor Verified | Engine: {engine})",
         f"Query: {query}",
         f"Results Count: {len(results)}\n"
     ]
     for idx, r in enumerate(results, 1):
-        lines.append(f"{idx}. [{r['title']}]({r['url']})")
-        if r["snippet"]:
-            lines.append(f"   Snippet: {r['snippet']}")
+        safe_title, _, _ = security_guard.scan_and_sanitize(r.get("title", ""))
+        safe_snippet, _, _ = security_guard.scan_and_sanitize(r.get("snippet", ""))
+        lines.append(f"{idx}. [{safe_title}]({r['url']})")
+        if safe_snippet:
+            lines.append(f"   Snippet: {safe_snippet}")
         lines.append("")
     return "\n".join(lines).strip()
 
@@ -893,9 +917,10 @@ def main():
                 sys.stderr.flush()
                 scraped = fetch_page_text_tor(u, max_chars=4000)
                 if scraped and scraped.get("text"):
-                    clean_text = scraped["text"].strip()
+                    clean_text, _, _ = security_guard.scan_and_sanitize(scraped["text"].strip())
                     if len(clean_text) > 100:
-                        deep_sections.append(f"### Deep Source Content: {title} ({u})\n```\n{clean_text}\n```")
+                        safe_title, _, _ = security_guard.scan_and_sanitize(title)
+                        deep_sections.append(f"### Deep Source Content: {safe_title} ({u})\n```\n{clean_text}\n```")
             except Exception:
                 pass
         if deep_sections:

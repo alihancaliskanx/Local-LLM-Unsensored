@@ -1,0 +1,531 @@
+#!/usr/bin/env python3
+"""
+cll.opencode_bridge — Lightweight OpenAI-Compatible Agent Gateway for OpenCode + Local Qwen3-4B.
+Prunes cloud system-prompt bloat, injects native autonomous Tor web search (`tor_search`),
+translates `tor_search` / `websearch` into OpenCode `shell` (`torsearch`) calls, and recovers
+raw JSON tool calls emitted without `<tool_call>` XML tags.
+"""
+
+import os
+import re
+import sys
+import json
+import time
+import shlex
+import socket
+import argparse
+import urllib.request
+import urllib.error
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Dict, Any, List, Optional, Tuple, Set
+
+LLAMA_BASE_URL = os.environ.get("LLAMA_SERVER_URL", "http://127.0.0.1:8080")
+BRIDGE_HOST = os.environ.get("OPENCODE_BRIDGE_HOST", "127.0.0.1")
+BRIDGE_PORT = int(os.environ.get("OPENCODE_BRIDGE_PORT", "8081"))
+
+BLOCKED_TOOLS = {
+    "experimental_image_generate",
+    "execute",
+    "skill",
+    "webfetch",
+    "websearch",
+}
+
+TOR_SEARCH_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "tor_search",
+        "description": (
+            "Search the live internet, GitHub, Wikipedia, ArXiv, and .onion dark web "
+            "anonymously over Tor SOCKS5h with commercial/darkweb spam filtering and "
+            "prompt-injection sanitization. Call this autonomously whenever you need "
+            "current information, external facts, documentation, package versions, or CVEs "
+            "at the start of a request OR in the middle of working on a multi-step task."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query keywords"
+                },
+                "deep": {
+                    "type": "boolean",
+                    "description": "Set true to also scrape and read full text of top result pages over Tor (default: false)"
+                }
+            },
+            "required": ["query"],
+            "additionalProperties": False
+        },
+        "strict": False
+    }
+}
+
+AUTONOMOUS_TOR_DIRECTIVE = (
+    "\n\n# Autonomous Tor Web Search & Senior Engineer Execution\n"
+    "1. NO DEFINITIONS OR ELEMENTARY EXPLANATIONS: The user is a senior systems architect and reverse engineer who already knows all underlying concepts, protocols, security terminology, and programming concepts thoroughly. NEVER define or explain terms, protocols, libraries, or architectures (e.g. CAN bus, eBPF, zero-click, memory layout, AST, etc.) unless the user explicitly asks: 'What is X?'.\n"
+    "2. NO INTRODUCTORY ESSAYS OR TUTORIALS: Omit background history, introductory overviews, conceptual tutorials, and unsolicited educational context.\n"
+    "3. ZERO CHATTY FILLER: Omit conversational preamble ('Sure! I can help with that', 'Here is the code:', 'In this implementation...'). Immediately output the exact code, command, diff, or tool call.\n"
+    "4. CONCISE & DENSE: Keep explanations strictly minimal. If a note is necessary for a non-obvious engineering choice, limit it to at most 1-2 dense technical bullet points.\n"
+    "5. AUTONOMOUS TOR WEB SEARCH: You have direct access to the live internet, GitHub, ArXiv, and .onion dark web via `tor_search` (routed 100% over Tor SOCKS5h with spam & injection protection). Autonomously call `tor_search` whenever external documentation, exact API signatures, package versions, or CVE details are needed — both at the start of a request AND mid-task while reading/editing files.\n"
+    "6. TOOL CALL FORMAT: When calling a tool in text, always wrap the JSON in `<tool_call>{\"name\": \"...\", \"arguments\": {...}}</tool_call>`."
+)
+
+
+def prune_system_prompt(content: str) -> str:
+    """Strips OpenCode Code Mode VM catalog and unused desktop/cloud skills bloat."""
+    if not content:
+        return content
+    # Remove # Code Mode ... up to Today's date: (or end of <available_skills>)
+    cleaned = re.sub(
+        r"# Code Mode\b.*?(?=Today's date:|\Z)",
+        "",
+        content,
+        flags=re.DOTALL
+    )
+    cleaned = re.sub(
+        r"<available_skills>.*?</available_skills>\s*",
+        "",
+        cleaned,
+        flags=re.DOTALL
+    )
+    cleaned = re.sub(
+        r"When you create a worktree outside the current working directory.*?\n?",
+        "",
+        cleaned,
+        flags=re.DOTALL
+    )
+    if "Autonomous Tor Web Search" not in cleaned:
+        cleaned = cleaned.rstrip() + AUTONOMOUS_TOR_DIRECTIVE
+    return cleaned
+
+
+def transform_request_payload(data: Dict[str, Any]) -> Tuple[Dict[str, Any], Set[str]]:
+    """Prunes prompt bloat, optimizes tool definitions, and injects `tor_search`."""
+    tools = data.get("tools")
+    valid_tool_names = set()
+
+    if isinstance(tools, list) and len(tools) > 0:
+        filtered_tools = []
+        for t in tools:
+            fn = t.get("function", {}) if isinstance(t, dict) else {}
+            name = fn.get("name", "")
+            if name and name not in BLOCKED_TOOLS:
+                filtered_tools.append(t)
+                valid_tool_names.add(name)
+
+        filtered_tools.append(TOR_SEARCH_TOOL)
+        valid_tool_names.add("tor_search")
+        valid_tool_names.add("websearch")
+        data["tools"] = filtered_tools
+
+        messages = data.get("messages", [])
+        for m in messages:
+            if isinstance(m, dict) and m.get("role") == "system" and isinstance(m.get("content"), str):
+                m["content"] = prune_system_prompt(m["content"])
+
+    # Map reasoning_effort if present
+    effort = data.pop("reasoning_effort", None)
+    if effort in ("low", "medium", "high"):
+        if effort == "low":
+            data["temperature"] = 0.2
+        elif effort == "medium":
+            data["temperature"] = 0.4
+        elif effort == "high":
+            data["temperature"] = 0.6
+
+    return data, valid_tool_names
+
+
+def build_torsearch_shell_command(args_obj: Dict[str, Any]) -> str:
+    """Converts `tor_search` arguments into a safe `torsearch` CLI command string."""
+    query = str(args_obj.get("query", "")).strip()
+    deep = bool(args_obj.get("deep", False))
+    limit = int(args_obj.get("limit", 4))
+    flags = f"-n {limit}"
+    if deep:
+        flags += " --deep"
+    return f"torsearch {flags} {shlex.quote(query)}"
+
+
+def rewrite_tool_call_entry(tc: Dict[str, Any]) -> Dict[str, Any]:
+    """Rewrites `tor_search` or `websearch` tool call into OpenCode's native `shell` tool call."""
+    fn = tc.get("function", {})
+    name = fn.get("name", "")
+    raw_args = fn.get("arguments", "{}")
+    if name in ("tor_search", "websearch"):
+        try:
+            args_obj = json.loads(raw_args) if isinstance(raw_args, str) else (raw_args or {})
+        except Exception:
+            args_obj = {"query": str(raw_args)}
+        cmd = build_torsearch_shell_command(args_obj)
+        fn["name"] = "shell"
+        fn["arguments"] = json.dumps({"command": cmd}, ensure_ascii=False)
+        tc["function"] = fn
+    return tc
+
+
+def try_parse_raw_json_tool_call(text: str, valid_tool_names: set) -> Optional[Tuple[str, Dict[str, Any]]]:
+    """
+    Detects if the model emitted a raw JSON tool call `{"name": "...", "arguments": {...}}`
+    without `<tool_call>` XML tags. Returns (preceding_text, tool_call_dict) if found.
+    """
+    if not text or '"name"' not in text or '"arguments"' not in text:
+        return None
+
+    # Find the start of a JSON object containing "name"
+    match = re.search(r'(\{\s*"name"\s*:\s*"([a-zA-Z0-9_]+)"\s*,\s*"arguments"\s*:\s*\{.*\}\s*\})\s*$', text.strip(), flags=re.DOTALL)
+    if not match:
+        return None
+
+    json_str = match.group(1)
+    tool_name = match.group(2)
+    if tool_name not in valid_tool_names:
+        return None
+
+    try:
+        parsed = json.loads(json_str)
+        if isinstance(parsed, dict) and parsed.get("name") == tool_name and isinstance(parsed.get("arguments"), dict):
+            prefix = text.strip()[:match.start()].strip()
+            tc = {
+                "index": 0,
+                "id": f"call_{int(time.time() * 1000)}",
+                "type": "function",
+                "function": {
+                    "name": tool_name,
+                    "arguments": json.dumps(parsed["arguments"], ensure_ascii=False)
+                }
+            }
+            return prefix, rewrite_tool_call_entry(tc)
+    except Exception:
+        pass
+    return None
+
+
+class OpenCodeBridgeHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, format: str, *args: Any) -> None:
+        pass
+
+    def do_GET(self) -> None:
+        target_url = f"{LLAMA_BASE_URL}{self.path}"
+        try:
+            req = urllib.request.Request(target_url, method="GET")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                body = resp.read()
+                self.send_response(resp.status)
+                self.send_header("Content-Type", resp.headers.get("Content-Type", "application/json"))
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+        except Exception as e:
+            err = json.dumps({"error": str(e)}).encode("utf-8")
+            self.send_response(502)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(err)))
+            self.end_headers()
+            self.wfile.write(err)
+
+    def do_POST(self) -> None:
+        length = int(self.headers.get("Content-Length", "0"))
+        raw_body = self.rfile.read(length) if length > 0 else b"{}"
+
+        try:
+            data = json.loads(raw_body.decode("utf-8"))
+        except Exception:
+            data = {}
+
+        is_stream = bool(data.get("stream", False))
+        has_tools = bool(data.get("tools"))
+        data, valid_tool_names = transform_request_payload(data)
+
+        target_url = f"{LLAMA_BASE_URL}{self.path}"
+        req = urllib.request.Request(
+            target_url,
+            data=json.dumps(data, ensure_ascii=False).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+
+        if not is_stream:
+            try:
+                with urllib.request.urlopen(req, timeout=300) as resp:
+                    resp_data = json.loads(resp.read().decode("utf-8"))
+                    if has_tools:
+                        choices = resp_data.get("choices", [])
+                        if choices:
+                            msg = choices[0].get("message", {})
+                            tcs = msg.get("tool_calls")
+                            if tcs:
+                                msg["tool_calls"] = [rewrite_tool_call_entry(tc) for tc in tcs]
+                            else:
+                                content = msg.get("content") or ""
+                                parsed_tc = try_parse_raw_json_tool_call(content, valid_tool_names)
+                                if parsed_tc:
+                                    prefix, tc_obj = parsed_tc
+                                    msg["content"] = prefix if prefix else None
+                                    msg["tool_calls"] = [tc_obj]
+                                    choices[0]["finish_reason"] = "tool_calls"
+                    out = json.dumps(resp_data, ensure_ascii=False).encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(out)))
+                    self.end_headers()
+                    self.wfile.write(out)
+            except Exception as e:
+                err = json.dumps({"error": {"message": str(e)}}).encode("utf-8")
+                self.send_response(502)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(err)))
+                self.end_headers()
+                self.wfile.write(err)
+            return
+
+        # Streaming SSE handling
+        try:
+            resp = urllib.request.urlopen(req, timeout=300)
+        except Exception as e:
+            err = json.dumps({"error": {"message": str(e)}}).encode("utf-8")
+            self.send_response(502)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(err)))
+            self.end_headers()
+            self.wfile.write(err)
+            return
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", " close")
+        self.end_headers()
+
+        def send_sse(obj: Any) -> None:
+            if isinstance(obj, str):
+                line = f"data: {obj}\n\n"
+            else:
+                line = f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
+            self.wfile.write(line.encode("utf-8"))
+            self.wfile.flush()
+
+        if not has_tools:
+            for raw_line in resp:
+                self.wfile.write(raw_line)
+                self.wfile.flush()
+            resp.close()
+            return
+
+        accumulated_tcs: Dict[int, Dict[str, Any]] = {}
+        tool_call_buffer: List[str] = []
+        buffering_tool_call = False
+        initial_check_buffer: List[str] = []
+        is_checking_initial_json = False
+        has_streamed_content = False
+        sent_role = False
+        usage_chunk = None
+        meta_template: Dict[str, Any] = {
+            "id": f"chatcmpl-{int(time.time() * 1000)}",
+            "object": "chat.completion.chunk",
+            "created": int(time.time()),
+            "model": data.get("model", "qwen3-4b")
+        }
+
+        for raw_line in resp:
+            line_str = raw_line.decode("utf-8", errors="ignore").strip()
+            if not line_str or not line_str.startswith("data: "):
+                continue
+            payload_str = line_str[6:].strip()
+            if payload_str == "[DONE]":
+                break
+
+            try:
+                chunk = json.loads(payload_str)
+            except Exception:
+                continue
+
+            for k in ("id", "created", "model", "system_fingerprint"):
+                if k in chunk:
+                    meta_template[k] = chunk[k]
+
+            if chunk.get("usage"):
+                usage_chunk = chunk
+
+            choices = chunk.get("choices", [])
+            if not choices:
+                continue
+
+            choice = choices[0]
+            delta = choice.get("delta", {})
+
+            if delta.get("role") and not sent_role:
+                sent_role = True
+                send_sse({
+                    **meta_template,
+                    "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}]
+                })
+
+            if "tool_calls" in delta and delta["tool_calls"]:
+                for tc_delta in delta["tool_calls"]:
+                    idx = tc_delta.get("index", 0)
+                    if idx not in accumulated_tcs:
+                        accumulated_tcs[idx] = {
+                            "index": idx,
+                            "id": tc_delta.get("id") or f"call_{int(time.time() * 1000)}_{idx}",
+                            "type": "function",
+                            "function": {"name": "", "arguments": ""}
+                        }
+                    if tc_delta.get("id"):
+                        accumulated_tcs[idx]["id"] = tc_delta["id"]
+                    fn_delta = tc_delta.get("function", {})
+                    if fn_delta.get("name"):
+                        accumulated_tcs[idx]["function"]["name"] += fn_delta["name"]
+                    if fn_delta.get("arguments"):
+                        accumulated_tcs[idx]["function"]["arguments"] += fn_delta["arguments"]
+
+            content_piece = delta.get("content")
+            if content_piece:
+                if buffering_tool_call:
+                    tool_call_buffer.append(content_piece)
+                elif "<tool_call>" in content_piece:
+                    buffering_tool_call = True
+                    parts = content_piece.split("<tool_call>", 1)
+                    prefix = parts[0]
+                    suffix = "<tool_call>" + parts[1]
+                    if prefix:
+                        has_streamed_content = True
+                        send_sse({
+                            **meta_template,
+                            "choices": [{"index": 0, "delta": {"content": prefix}, "finish_reason": None}]
+                        })
+                    tool_call_buffer.append(suffix)
+                elif not has_streamed_content and not is_checking_initial_json:
+                    stripped = content_piece.lstrip()
+                    if stripped.startswith("{"):
+                        is_checking_initial_json = True
+                        initial_check_buffer.append(content_piece)
+                    else:
+                        has_streamed_content = True
+                        send_sse({
+                            **meta_template,
+                            "choices": [{"index": 0, "delta": {"content": content_piece}, "finish_reason": None}]
+                        })
+                elif is_checking_initial_json:
+                    initial_check_buffer.append(content_piece)
+                    combined = "".join(initial_check_buffer)
+                    if '"name"' in combined:
+                        match = re.search(r'\{\s*"name"\s*:\s*"([a-zA-Z0-9_]+)"', combined)
+                        if match and match.group(1) in valid_tool_names:
+                            buffering_tool_call = True
+                            tool_call_buffer = list(initial_check_buffer)
+                            initial_check_buffer = []
+                            is_checking_initial_json = False
+                        elif match and match.group(1) not in valid_tool_names:
+                            for piece in initial_check_buffer:
+                                send_sse({
+                                    **meta_template,
+                                    "choices": [{"index": 0, "delta": {"content": piece}, "finish_reason": None}]
+                                })
+                            has_streamed_content = True
+                            initial_check_buffer = []
+                            is_checking_initial_json = False
+                    elif len(combined) > 60 or "\n" in combined:
+                        for piece in initial_check_buffer:
+                            send_sse({
+                                **meta_template,
+                                "choices": [{"index": 0, "delta": {"content": piece}, "finish_reason": None}]
+                            })
+                        has_streamed_content = True
+                        initial_check_buffer = []
+                        is_checking_initial_json = False
+                else:
+                    send_sse({
+                        **meta_template,
+                        "choices": [{"index": 0, "delta": {"content": content_piece}, "finish_reason": None}]
+                    })
+
+        resp.close()
+
+        # Flush initial check buffer if still pending
+        if initial_check_buffer:
+            for piece in initial_check_buffer:
+                send_sse({
+                    **meta_template,
+                    "choices": [{"index": 0, "delta": {"content": piece}, "finish_reason": None}]
+                })
+
+        # Finalize tool calls or buffered content
+        if accumulated_tcs:
+            final_tcs = [rewrite_tool_call_entry(accumulated_tcs[k]) for k in sorted(accumulated_tcs.keys())]
+            send_sse({
+                **meta_template,
+                "choices": [{"index": 0, "delta": {"tool_calls": final_tcs}, "finish_reason": None}]
+            })
+            send_sse({
+                **meta_template,
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]
+            })
+        elif tool_call_buffer:
+            full_buffered = "".join(tool_call_buffer)
+            clean_buffered = re.sub(r"</?tool_call>", "", full_buffered).strip()
+            parsed_tc = try_parse_raw_json_tool_call(clean_buffered, valid_tool_names)
+            if parsed_tc:
+                prefix, tc_obj = parsed_tc
+                if prefix:
+                    send_sse({
+                        **meta_template,
+                        "choices": [{"index": 0, "delta": {"content": prefix}, "finish_reason": None}]
+                    })
+                send_sse({
+                    **meta_template,
+                    "choices": [{"index": 0, "delta": {"tool_calls": [tc_obj]}, "finish_reason": None}]
+                })
+                send_sse({
+                    **meta_template,
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]
+                })
+            else:
+                send_sse({
+                    **meta_template,
+                    "choices": [{"index": 0, "delta": {"content": full_buffered}, "finish_reason": None}]
+                })
+                send_sse({
+                    **meta_template,
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
+                })
+        else:
+            send_sse({
+                **meta_template,
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
+            })
+
+        if usage_chunk:
+            send_sse(usage_chunk)
+
+        send_sse("[DONE]")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="OpenCode Agent Bridge for Local Qwen3-4B + Tor Search")
+    parser.add_argument("--host", default=BRIDGE_HOST, help="Bind host (default: 127.0.0.1)")
+    parser.add_argument("--port", type=int, default=BRIDGE_PORT, help="Bind port (default: 8081)")
+    args = parser.parse_args()
+
+    # Check if port is already bound
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind((args.host, args.port))
+        sock.close()
+    except OSError:
+        # Already running
+        sys.exit(0)
+
+    ThreadingHTTPServer.allow_reuse_address = True
+    server = ThreadingHTTPServer((args.host, args.port), OpenCodeBridgeHandler)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    main()

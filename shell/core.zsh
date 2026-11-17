@@ -66,13 +66,24 @@ _qw_resolve_reasoning() {
   esac
 }
 
-# Stop running llama instances
+# Stop running llama and bridge instances
 qstop() {
   if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
     echo "Usage: qstop"
     return 0
   fi
-  pkill -x 'llama-server|llama-cli' 2>/dev/null && echo "Local LLM processes stopped." || echo "No active processes found."
+  local killed=0
+  if pkill -x 'llama-server|llama-cli' 2>/dev/null; then
+    killed=1
+  fi
+  if pkill -f 'cll.opencode_bridge' 2>/dev/null; then
+    killed=1
+  fi
+  if (( killed )); then
+    echo "Local LLM processes stopped."
+  else
+    echo "No active processes found."
+  fi
 }
 
 # Helper: cleanly extract the last Assistant block from llama-cli -o file

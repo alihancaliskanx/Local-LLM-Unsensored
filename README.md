@@ -49,16 +49,19 @@ When running `Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf` (~2.5 GB
 
 | Path | Description |
 | :--- | :--- |
-| `setup.sh` | One-time setup: installs `llama.cpp`, downloads the model, and links the `qwen-local` command into `~/.local/bin` |
+| `setup.sh` | One-time setup: installs `llama.cpp`, downloads the model, and links the `qwen-local` and `torsearch` commands into `~/.local/bin` |
 | `qwen-local` | Command entry point: dispatches `qwen-local server` and `qwen-local cli` to `scripts/` |
+| `torsearch` | Fast standalone CLI launcher for privacy-preserving raw Tor search used by OpenCode and scripts |
+| `opencode.json` | Preconfigured OpenCode agent definition file (local provider, autonomous Tor tools, and policies) |
 | `qwen.zsh` | Shell entry point sourcing modular helper scripts under `shell/` |
-| `shell/core.zsh` | Shared context/reasoning resolvers (`32K` default, `48K` ceiling) and `qstop` |
+| `shell/core.zsh` | Shared context/reasoning resolvers (`32K` default, `48K` ceiling) and `qstop` (cleans llama and bridge daemons) |
 | `shell/cli.zsh` | Terminal functions (`qwserver`, `qwcli`, `qwfile`, `qwsec`, `qwpipe`) using `-f` file input to bypass the 128 KiB kernel argument limit |
 | `shell/web.zsh` | Tor web search (`qwsearch`) and Chat Local LLM (`cll`) launchers |
 | `scripts/common.sh` | Shared runtime defaults (`CTX=32768`, `-ctk q4_0 -ctv q4_0`) and GPU/binary checks |
-| `scripts/run-server.sh` | Launches `llama-server` on `127.0.0.1:8080` |
+| `scripts/run-server.sh` | Launches `llama-server` on `127.0.0.1:8080` and background `cll.opencode_bridge` on `127.0.0.1:8081` |
 | `scripts/run-cli.sh` | Launches interactive or single-turn chat via `llama-cli` (loads `prompts/cli_rules.md`) |
 | `scripts/pre-commit` | Git pre-commit hook scanning diffs for secrets and security flaws via active server or CLI |
+| `cll/opencode_bridge.py` | Lightweight OpenAI-compatible gateway (`127.0.0.1:8081`) for OpenCode with prompt pruning and Tor search injection |
 | `cll/inference.py` | Unified terminal inference engine routing CLI commands to active server HTTP or CLI fallback |
 | `cll/project_analyzer.py` | Hierarchical codebase explorer & chunked module analyst with `/tmp/local-llm/` note-taking |
 | `cll/symbol_resolver.py` | In-memory C/C++ `#include` and Python `import` symbol table resolver with relevance filtering |
@@ -91,9 +94,9 @@ When running `Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf` (~2.5 GB
 
 1. Installs `llama-cpp` with `ggml-cuda` (if `nvidia-smi` is present) or `ggml-vulkan` via `pacman`. Set `BACKEND=cuda` or `BACKEND=vulkan` to choose explicitly.
 2. Downloads `Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf` from `mradermacher/Huihui-Qwen3-4B-Instruct-2507-abliterated-i1-GGUF` into the project root (or `MODEL_PATH`). An interrupted download resumes on the next run.
-3. Links the `qwen-local` command into `~/.local/bin` (or `BIN_DIR`). An existing `qwen-local` that points elsewhere is never overwritten.
+3. Links the `qwen-local` and `torsearch` commands into `~/.local/bin` (or `BIN_DIR`). Existing links that point elsewhere are never overwritten.
 
-Remove the `qwen-local` link again with `./setup.sh --uninstall`; installed packages and the model are kept.
+Remove the `qwen-local` and `torsearch` links again with `./setup.sh --uninstall`; installed packages and the model are kept.
 
 The manual steps are listed below for reference.
 
@@ -427,7 +430,117 @@ Local API server:
 llama-server -hf mradermacher/Huihui-Qwen3-4B-Instruct-2507-abliterated-i1-GGUF -hff Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf -ngl auto -fit on -fitt 512 -c 32768 -np 1 -fa on -ctk q4_0 -ctv q4_0 -t 6 --port 8080
 ```
 
-### E. Docker Execution (Optional)
+### E. OpenCode Autonomous Coding Agent Integration
+
+The suite includes native, turnkey compatibility with the [OpenCode](https://opencode.ai) autonomous coding agent CLI and desktop interface via `cll.opencode_bridge`.
+
+#### Architecture & Capabilities
+
+```
++-------------------------------------------------------------+
+|                     OpenCode CLI / TUI                      |
++-------------------------------------------------------------+
+                              | HTTP (Port 8081)
+                              v
++-------------------------------------------------------------+
+|                   cll.opencode_bridge                       |
+|  - Prunes # Code Mode & unused cloud skill catalogs         |
+|  - Injects Senior Systems Architect directives              |
+|  - Injects autonomous Tor search tool (tor_search)          |
+|  - Translates tor_search -> shell (torsearch ...)           |
+|  - Recovers raw JSON tool calls emitted without XML tags    |
+|  - Maps reasoning effort ('low', 'medium', 'high')          |
++-------------------------------------------------------------+
+                              | HTTP (Port 8080)
+                              v
++-------------------------------------------------------------+
+|                  llama-server (Qwen3-4B)                    |
++-------------------------------------------------------------+
+```
+
+1. **Automatic Daemon Startup:** Launching `qwen-local server` or `qwserver` automatically starts `cll.opencode_bridge` on `http://127.0.0.1:8081` alongside `llama-server` on port `8080`.
+2. **Context Preservation:** Strips unnecessary cloud agent prompts, unused desktop skills, and container boilerplate, freeing up ~2,000 tokens of context.
+3. **Autonomous Tor Web Search:** The agent is empowered with real-time web, GitHub, ArXiv, and `.onion` dark web search routed 100% over Tor SOCKS5h. Tool calls to `tor_search` are automatically rewritten into local `torsearch` shell calls with prompt injection defenses.
+4. **Resilient Tool Parsing:** Recovers raw JSON function calls when the model emits valid tool calls without explicit `<tool_call>` XML wrappers.
+
+#### Configuration (`opencode.json`)
+
+The repository includes a ready-to-use `opencode.json` configuring the local provider, permissions, and tool access:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "update": "disable",
+  "websearch": false,
+  "experimental": {
+    "image_generate": false
+  },
+  "policies": [
+    { "action": "tool.use", "resource": "execute", "effect": "deny" },
+    { "action": "tool.use", "resource": "webfetch", "effect": "deny" },
+    { "action": "tool.use", "resource": "skill", "effect": "deny" },
+    { "action": "skill.use", "resource": "*", "effect": "deny" }
+  ],
+  "permissions": [
+    { "action": "shell", "resource": "torsearch*", "effect": "allow" },
+    { "action": "shell", "resource": "qwsearch*", "effect": "allow" },
+    { "action": "shell", "resource": "qwsr*", "effect": "allow" }
+  ],
+  "providers": {
+    "local-cll": {
+      "name": "Local CLL (Qwen3-4B)",
+      "package": "@ai-sdk/openai-compatible",
+      "settings": {
+        "baseURL": "http://127.0.0.1:8081/v1",
+        "apiKey": "local"
+      },
+      "models": {
+        "qwen3-4b": {
+          "name": "Qwen3-4B Unsensored",
+          "limit": {
+            "context": 32768,
+            "output": 8192
+          },
+          "capabilities": {
+            "tools": true,
+            "temperature": true,
+            "reasoning": {
+              "supported": true,
+              "effort": ["low", "medium", "high"]
+            }
+          },
+          "variants": [
+            { "id": "low", "body": { "reasoning_effort": "low" } },
+            { "id": "medium", "body": { "reasoning_effort": "medium" } },
+            { "id": "high", "body": { "reasoning_effort": "high" } }
+          ]
+        }
+      }
+    }
+  },
+  "model": "local-cll/qwen3-4b#medium"
+}
+```
+
+#### Running OpenCode with Local Qwen3-4B
+
+Start the backend:
+
+```bash
+qwserver -c 32 -r 2
+```
+
+In your terminal or project directory, launch OpenCode:
+
+```bash
+opencode run "Audit memory safety and concurrency risks in src/driver.c"
+```
+
+```bash
+opencode
+```
+
+### F. Docker Execution (Optional)
 
 ```bash
 docker run --gpus all --rm -it -p 8080:8080 -v "$(pwd):/models" ghcr.io/ggml-org/llama.cpp:server-cuda -m /models/Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf -ngl 28 -c 32768 -fa on -ctk q4_0 -ctv q4_0 --host 0.0.0.0 --port 8080

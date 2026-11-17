@@ -1,0 +1,52 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "update": "disable",
+  "websearch": false,
+  "experimental": {
+    "image_generate": false
+  },
+  "policies": [
+    { "action": "tool.use", "resource": "execute", "effect": "deny" },
+    { "action": "tool.use", "resource": "webfetch", "effect": "deny" },
+    { "action": "tool.use", "resource": "skill", "effect": "deny" },
+    { "action": "skill.use", "resource": "*", "effect": "deny" }
+  ],
+  "permissions": [
+    { "action": "shell", "resource": "torsearch*", "effect": "allow" },
+    { "action": "shell", "resource": "qwsearch*", "effect": "allow" },
+    { "action": "shell", "resource": "qwsr*", "effect": "allow" }
+  ],
+  "providers": {
+    "local-cll": {
+      "name": "Local CLL (Qwen3-4B)",
+      "package": "@ai-sdk/openai-compatible",
+      "settings": {
+        "baseURL": "http://127.0.0.1:8081/v1",
+        "apiKey": "local"
+      },
+      "models": {
+        "qwen3-4b": {
+          "name": "Qwen3-4B Unsensored",
+          "limit": {
+            "context": 32768,
+            "output": 8192
+          },
+          "capabilities": {
+            "tools": true,
+            "temperature": true,
+            "reasoning": {
+              "supported": true,
+              "effort": ["low", "medium", "high"]
+            }
+          },
+          "variants": [
+            { "id": "low", "body": { "reasoning_effort": "low" } },
+            { "id": "medium", "body": { "reasoning_effort": "medium" } },
+            { "id": "high", "body": { "reasoning_effort": "high" } }
+          ]
+        }
+      }
+    }
+  },
+  "model": "local-cll/qwen3-4b#medium"
+}
