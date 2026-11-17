@@ -69,7 +69,7 @@ _qwcli_completion() {
 _qwserver_completion() {
   _arguments -s \
     '-c[Context tokens in thousands]:context:_qw_common_context_args' \
-    '-p[Server port (default 8080)]:port:_default' \
+    '-p[Server port (default 61232)]:port:_default' \
     '-r[Reasoning effort level (0..4)]:reasoning:_qw_common_reasoning_args' \
     '(-h --help)'{-h,--help}'[Show usage information]'
 }

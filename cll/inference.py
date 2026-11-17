@@ -79,8 +79,13 @@ def check_is_turkish(prompt: str, force_tr: bool = False) -> bool:
     return is_turkish_query(prompt)
 
 
-def is_llama_server_running(host: str = "127.0.0.1", port: int = 8080) -> bool:
+DEFAULT_LLAMA_PORT = int(os.environ.get("LLAMA_PORT", os.environ.get("PORT", "61232")))
+
+
+def is_llama_server_running(host: str = "127.0.0.1", port: Optional[int] = None) -> bool:
     """Checks whether llama-server is responsive on the OpenAI API port."""
+    if port is None:
+        port = DEFAULT_LLAMA_PORT
     try:
         url = f"http://{host}:{port}/health"
         req = urllib.request.Request(url, method="GET")
@@ -192,10 +197,12 @@ def stream_completion_from_server(
     temperature: float = 0.2,
     reasoning_level: int = 2,
     host: str = "127.0.0.1",
-    port: int = 8080,
+    port: Optional[int] = None,
     capture_output: bool = False
 ) -> Tuple[bool, str]:
     """Streams token completion directly from llama-server HTTP API, optionally capturing text."""
+    if port is None:
+        port = DEFAULT_LLAMA_PORT
     url = f"http://{host}:{port}/v1/chat/completions"
     payload: Dict[str, Any] = {
         "messages": messages,

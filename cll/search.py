@@ -737,7 +737,8 @@ def synthesize_with_llm(query: str, context: str, reasoning_level: int = 2) -> N
     # 1. Try active llama-server first (instant response, live streaming, zero GPU conflict)
     try:
         import urllib.request
-        server_url = "http://127.0.0.1:8080/v1/chat/completions"
+        server_port = os.environ.get("LLAMA_PORT", os.environ.get("PORT", "61232"))
+        server_url = f"http://127.0.0.1:{server_port}/v1/chat/completions"
         req_payload = {
             "messages": [
                 {"role": "user", "content": full_prompt}

@@ -97,7 +97,7 @@ Before running search queries or hybrid audits, verify the following checklist:
 | **Tor SOCKS5h Port** | `qwsearch --leak-test` | Confirms active Tor circuit and non-clearnet exit IP |
 | **No Staged Secrets** | `git diff --cached` | No hardcoded API keys, tokens, or private SSH keys |
 | **Manifest Isolation** | `qwfile --web -c 32 <path>` | Console logs confirm only generic package names are queried |
-| **Local LLM Status** | `qwserver` or `ps aux \| grep llama` | Model running locally on `127.0.0.1:8080` |
+| **Local LLM Status** | `cll status` or `ps aux \| grep llama` | Model running locally on `127.0.0.1:61232` (Reaper gateway: `61230`) |
 
 ---
 

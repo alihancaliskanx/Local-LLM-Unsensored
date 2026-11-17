@@ -18,7 +18,7 @@ fn current_time_secs() -> u64 {
 
 fn is_port_open(addr: &str) -> bool {
     TcpStream::connect_timeout(
-        &addr.parse().unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], 8080))),
+        &addr.parse().unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], 61232))),
         Duration::from_millis(150),
     )
     .is_ok()

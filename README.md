@@ -1,22 +1,23 @@
-# Local LLM Uncensored (Abliterated) Inference Setup
+# Local LLM (CLL) Multi-Model Inference & Privacy Platform
 
-Local inference configuration and runner scripts for abliterated (uncensored) models using `llama.cpp` on Arch Linux / CachyOS, tuned for 4 GB VRAM + 16 GB RAM. The default model is `Huihui-Qwen3-4B-Instruct-2507-abliterated` (`Q4_K_M`, ~2.5 GB).
+Local inference configuration, unified CLI runner (`cll`), and privacy-preserving toolchain using `llama.cpp` on Arch Linux / CachyOS, optimized for 4 GB VRAM + 16 GB RAM. The framework supports both unrestricted (abliterated) models and clean, aligned coding/debugging models (e.g., `Qwen2.5-Coder-3B-Instruct`), while strictly maintaining Tor SOCKS5h privacy boundaries.
 
 ---
 
-## 1. Overview of Abliterated Models
+## 1. Multi-Model Support & Hardware Alignment
 
-Abliterated models remove the refusal direction from the base model's weight matrices via orthogonalization without requiring full fine-tuning. This disables refusal filters while preserving the model's original coding, reasoning, and tool-calling capabilities.
+The suite is model-agnostic: it supports official aligned code/instruct models, reasoning models, and abliterated models. Abliterated checkpoints remove refusal vectors for security and reverse-engineering research, while official aligned models offer maximum syntax precision and benchmark performance for programming and debugging.
 
-### Model Selection by Hardware Tier
+### Supported Model Profiles (4 GB VRAM Tier)
 
-| Hardware Tier | Model | GGUF Repository | Quantization | Status |
+| Model Profile | Base Weights | Role | Context | VRAM Footprint |
 | :--- | :--- | :--- | :--- | :--- |
-| **4 GB VRAM + 16 GB RAM** | `Huihui-Qwen3-4B-Instruct-2507-abliterated` | `mradermacher/Huihui-Qwen3-4B-Instruct-2507-abliterated-i1-GGUF` | `i1-Q4_K_M` (~2.5 GB) | Default, benchmarked below |
-| **6–8 GB VRAM** | `Huihui-Qwen3-8B-abliterated-v2` | `mradermacher/Huihui-Qwen3-8B-abliterated-v2-GGUF` | `Q4_K_M` (~5.0 GB) | Not tested |
-| **16 GB+ VRAM or 32 GB RAM (MoE)** | `Huihui-Qwen3-30B-A3B-Instruct-2507-abliterated` | `mradermacher/Huihui-Qwen3-30B-A3B-Instruct-2507-abliterated-i1-GGUF` | `i1-Q4_K_M` (~18.6 GB) | Not tested |
+| `qwen3-4b` | `Huihui-Qwen3-4B-Instruct-2507-abliterated` | Uncensored flagship / OSINT / bypass analysis | 32K | ~2.5 GB (fits in VRAM) |
+| `qwen2.5-coder-3b` | `Qwen2.5-Coder-3B-Instruct` | Clean code & debug flagship (84.1% HumanEval) | 32K | ~1.93 GB (100% GPU, ~65 tok/s) |
+| `deepseek-r1-1.5b` | `DeepSeek-R1-Distill-Qwen-1.5B` | Ultra-fast reasoning & math analysis | 32K | ~1.1 GB (100% GPU, >80 tok/s) |
+| `qwen2.5-coder-7b` | `Qwen2.5-Coder-7B-Instruct` | Heavy architecture & complex refactoring | 16K | ~4.7 GB (hybrid GPU+CPU split) |
 
-Use any other model with `MODEL_PATH=/path/to/model.gguf qwen-local server`.
+Switch between profiles instantly using `cll model use <id>` or pass `-m <id>` to any `cll` command.
 
 ### Benchmark on 4 GB VRAM
 
@@ -128,30 +129,37 @@ Place `Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf` in the project 
 
 ## 5. Usage
 
-After `setup.sh`, `qwen-local` works from any directory. Without it, `./run-server.sh` and `./run-cli.sh` take the same arguments and environment variables. Options after the command are passed to `llama.cpp` unchanged.
+After `setup.sh`, `cll` works from any directory as the primary interface (with `qwen-local` retained for compatibility). Without global links, `bin/cll`, `./run-server.sh`, and `./run-cli.sh` take the same arguments and environment variables.
 
 ### A. Local Web UI and OpenAI API Server
 
 ```bash
-qwen-local server
+cll server
 ```
 
-- **Web UI:** `http://127.0.0.1:8080`
-- **OpenAI API Endpoint:** `http://127.0.0.1:8080/v1`
+- **OpenAI API Gateway (Lazy-Start & Auth):** `http://127.0.0.1:61230/v1` (via `cll-reaper`)
+- **Direct LLAMA Server Endpoint & Web UI:** `http://127.0.0.1:61232` / `http://127.0.0.1:61232/v1`
+- **Agent Bridge (Pruning & Tor Injection):** `http://127.0.0.1:61231/v1`
 
 Override runtime parameters with environment variables when needed:
 
 ```bash
-NGL=20 CTX=4096 PORT=8080 qwen-local server
+NGL=20 CTX=4096 PORT=61232 cll server
 ```
 
 ### B. Interactive Terminal Chat
 
 ```bash
-qwen-local cli
+cll chat
 ```
 
-If a custom `rules.md` file exists in the repository root (or is pointed to via `RULES_PATH`), `qwen-local cli` automatically injects it as the system prompt using `-sysf`.
+Or target any model directly without altering your default configuration:
+
+```bash
+cll -m qwen2.5-coder-3b chat
+```
+
+If a custom `rules.md` file exists in the repository root (or is pointed to via `RULES_PATH`), `cll chat` automatically injects it as the system prompt using `-sysf`.
 
 Only one `llama-server` or `llama-cli` instance can hold the GPU at a time. If another one is running, `qwen-local` waits up to 5 seconds for it to exit and then stops with the PIDs to terminate.
 
@@ -174,9 +182,9 @@ The shell integration provides high-performance developer commands with automati
 | `qws` | — | Single-turn query shortcut (unquoted prompts supported) | `qws explain Kalman filter sensor fusion in robotics` |
 | `qwsearch` | `qwsr` | Tor-isolated web search with local Qwen synthesis (`--chaff` traffic entropy) | `qwsearch --chaff -r 3 "Linux 6.13 scheduler"` |
 | `qwdoctor` | `qw check` | Diagnostic environment health check and OPSEC verification | `qwdoctor` / `qw check` |
-| `qwserver` | `qw` | Launches `llama-server` with custom context, port, and reasoning | `qwserver -c 32 -p 8080 -r 2` |
+| `qwserver` | `qw` | Launches `llama-server` with custom context, port, and reasoning | `qwserver -c 32 -p 61232 -r 2` |
 | `qstop` | — | Terminates active `llama-server` and `llama-cli` processes | `qstop` |
-| `cll` | — | Launches Chat Local LLM Web UI (`127.0.0.1:41625`, foreground / Ctrl+C) | `cll` / `cll stop` |
+| `cll` | — | Unified CLI and multi-model runner (status, logs, model, server, chat) | `cll status` / `cll server` |
 
 ---
 
@@ -343,26 +351,32 @@ qwserver [-c 16|32|48] [-p port] [-r 0..4]
 qstop
 ```
 
-- `qwserver`: Launches `llama-server` on `127.0.0.1:8080` (or custom `-p`) with Flash Attention, Q4_0 KV cache, and 512 MiB VRAM safety margin.
+- `qwserver`: Launches `llama-server` on `127.0.0.1:61232` (or custom `-p`) with Flash Attention, Q4_0 KV cache, and 512 MiB VRAM safety margin.
 - `qstop`: Safely terminates any running `llama-server` or `llama-cli` processes and releases GPU memory.
 
 ---
 
-#### 7. Chat Local LLM Web Gateway (`cll`)
+#### 7. Chat Local LLM CLI & Multi-Model Runner (`cll`)
 
-`cll` launches the browser interface on `http://127.0.0.1:41625` in the **foreground** with integrated Tor controls and LLM power management:
+`cll` is the unified command-line entry point for running, managing, and inspecting models, backends, and privacy tools:
 
 ```bash
-cll
-cll stop
+cll server                         # Start background server with active model
+cll chat                           # Interactive terminal chat with active model
+cll -m qwen2.5-coder-3b chat       # Chat with Qwen2.5-Coder without changing default
+cll status                         # Check active processes, gateway ports, and VRAM
+cll logs -f                        # Follow live gateway & reaper journalctl logs
+cll model list                     # List registered models and download status
+cll model use qwen2.5-coder-3b     # Switch persistent default model
+cll model pull qwen2.5-coder-3b    # Download model weights from HuggingFace
+cll search "query"                 # Run anonymous Tor web & onion search
+cll stop                           # Safely terminate all active server & bridge processes
 ```
 
-- **Foreground Lifecycle:** Press `Ctrl+C` to cleanly stop the server and release GPU memory. Press `Ctrl+Z` and run `bg` if you wish to run it in the background.
-- **Autonomous Deep Research:** Automatically triggers Tor search for research questions, Turkish/English queries, and explicit `/search` directives.
-- Embeds upstream `llama-ui` frontend.
-- Live token limit selector (4K to 48K context).
-- Live Tor IP rotation (`🔄 New IP`) and complete browser history wiper.
-- Zero disk logging (`--log-disable`).
+- **Per-Command Model Overrides:** Any command can take `-m <id>` or `--model <id>` to evaluate an alternate model without rewriting configuration.
+- **Service & Resource Inspection:** `cll status` reports active model metadata, gateway port bindings (`61230`–`61232`), process IDs, and real-time GPU VRAM allocation.
+- **Log Streaming:** `cll logs` inspects systemd journal logs from `cll-reaper.service`.
+- **Zero Disk Leakage:** All server runs enforce `--log-disable` and strict Tor-only outbound traffic.
 
 ---
 
@@ -378,7 +392,7 @@ qwdoctor --json
 
 - Verifies Tor SOCKS5h port `9050` connectivity.
 - Performs Tor exit IP leak check against `check.torproject.org`.
-- Checks `llama-server` process status and port `8080` health.
+- Checks `llama-server` process status and port `61232` health (and `cll-reaper` on port `61230`).
 - Scans and validates local GGUF model files.
 - Checks `cll` port `41625` binding and UI assets.
 - Verifies `.qwignore` active pattern counts and syntax.
@@ -433,7 +447,7 @@ llama-cli -hf mradermacher/Huihui-Qwen3-4B-Instruct-2507-abliterated-i1-GGUF -hf
 Local API server:
 
 ```bash
-llama-server -hf mradermacher/Huihui-Qwen3-4B-Instruct-2507-abliterated-i1-GGUF -hff Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf -ngl auto -fit on -fitt 512 -c 32768 -np 1 -fa on -ctk q4_0 -ctv q4_0 -t 6 --port 8080
+llama-server -hf Qwen/Qwen2.5-Coder-3B-Instruct-GGUF -hff qwen2.5-coder-3b-instruct-q4_k_m.gguf -ngl auto -fit on -fitt 512 -c 32768 -np 1 -fa on -ctk q4_0 -ctv q4_0 -t 6 --port 61232
 ```
 
 ### E. OpenCode Autonomous Coding Agent Integration
@@ -578,7 +592,7 @@ systemctl --user enable --now cll-reaper.service
 ### F. Docker Execution (Optional)
 
 ```bash
-docker run --gpus all --rm -it -p 8080:8080 -v "$(pwd):/models" ghcr.io/ggml-org/llama.cpp:server-cuda -m /models/Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf -ngl 28 -c 32768 -fa on -ctk q4_0 -ctv q4_0 --host 0.0.0.0 --port 8080
+docker run --gpus all --rm -it -p 61232:61232 -v "$(pwd):/models" ghcr.io/ggml-org/llama.cpp:server-cuda -m /models/qwen2.5-coder-3b-instruct-q4_k_m.gguf -ngl auto -c 32768 -fa on -ctk q4_0 -ctv q4_0 --host 0.0.0.0 --port 61232
 ```
 
 ---

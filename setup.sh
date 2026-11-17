@@ -33,10 +33,10 @@ Without arguments, installs everything needed to run '${COMMAND_NAME}'. Steps th
 already done are skipped, so it is safe to run again:
   1. llama-cpp and a ggml GPU backend via pacman (asks for sudo)
   2. ${MODEL_FILE} from ${MODEL_REPO} (resumes a partial download)
-  3. '${COMMAND_NAME}', '${TORSEARCH_NAME}', and '${REAPER_NAME}' links in ${BIN_DIR}
+  3. '${CLL_NAME}', '${COMMAND_NAME}', '${TORSEARCH_NAME}', '${QSTOP_NAME}', and '${REAPER_NAME}' links in ${BIN_DIR}
   4. manual pages (man1) linked into ${MAN_DIR}
 
-  --uninstall   Remove '${COMMAND_NAME}', '${TORSEARCH_NAME}', '${REAPER_NAME}', and manpage links. Packages and the model are kept.
+  --uninstall   Remove '${CLL_NAME}', '${COMMAND_NAME}', '${TORSEARCH_NAME}', '${QSTOP_NAME}', '${REAPER_NAME}', and manpage links. Packages and the model are kept.
 
 Environment:
   BACKEND      cuda or vulkan (default: cuda if nvidia-smi exists, otherwise vulkan)

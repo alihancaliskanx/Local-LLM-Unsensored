@@ -66,7 +66,7 @@ searches active development environments (such as \fI~/Projects\fR, \fI~/Code\fR
 Remote Git URLs or shorthand identifiers (e.g., \fBgh:owner/repo\fR) are cloned into temporary storage (with automatic \fBtorsocks\fR routing if Tor is active).
 .TP
 .B Hybrid Inference Engine
-If a local \fBllama\-server\fR is running (default: \fIhttp://127.0.0.1:8080\fR),
+If a local \fBllama\-server\fR is running (default: \fIhttp://127.0.0.1:61232\fR),
 .B qwfile
 streams tokens via Server\-Sent Events (SSE) through direct HTTP requests.
 If the server is offline or busy, it seamlessly falls back to the standalone \fBllama\-cli\fR executable.
@@ -131,7 +131,7 @@ Defaults to the location where the suite was installed.
 .TP
 .B QWEN_PORT
 HTTP port for the local \fBllama\-server\fR daemon.
-Defaults to \fB8080\fR.
+Defaults to \fB61232\fR.
 .TP
 .B CTX
 Manual token context size override passed to backend binaries.

@@ -6,25 +6,119 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 usage() {
     cat <<EOF
-cll — Chat Local LLM: Unified CLI & Multi-Model Runner
+cll — Chat Local LLM: Unified Multi-Model CLI & Inference Runner
 
-Usage: cll <command> [options...]
+Usage: cll [global flags] <command> [command options...]
 
 Core Commands:
   server       Start llama-server, agent bridge, and background watchdog
   chat, cli    Start an interactive terminal chat with llama-cli
   stop         Safely terminate all active server, bridge, and CLI processes
+  status       Display live status of services, active model, and GPU VRAM
+  logs         View or follow background reaper and server logs
   search       Privacy-preserving raw Tor web & dark web search (torsearch)
   model        Manage multi-model profiles (list, use, pull, current)
   doctor       Run system diagnostics (health, GPU memory, ports)
   help         Show this help message
 
-Options after the command are passed to llama.cpp unchanged.
-Runtime defaults can be overridden with environment variables, e.g.:
-  CTX=32768 cll server
-  cll model use qwen2.5-coder-7b
+Global Flags:
+  -m, --model <id>   Override the active model profile for this command invocation
+  -v, --version      Show version information
+
+Examples:
+  cll server                         # Start background server with active model
+  cll -m qwen2.5-coder-3b chat       # Chat with Qwen2.5-Coder without changing default
+  cll status                         # Check active processes and VRAM allocation
+  cll logs -f                        # Follow live gateway logs
+  cll model list                     # List all installed and registered models
+  cll model use qwen2.5-coder-3b     # Switch persistent default model
 EOF
 }
+
+show_status() {
+    echo "── [Chat Local LLM (CLL) System Status] ──"
+    echo ""
+    # Model info
+    if command -v python3 >/dev/null 2>&1; then
+        echo "Active Model Profile:"
+        PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}" python3 -c "
+from cll import model_manager
+info = model_manager.get_model_info()
+print(f\"  ID          : {info.get('id')}\")
+print(f\"  Name        : {info.get('name')}\")
+print(f\"  Context     : {info.get('context')} tokens ({info.get('context', 0)//1024}K)\")
+print(f\"  Parameters  : {info.get('parameters')}\")
+print(f\"  Installed   : {'Yes' if info.get('is_installed') else 'No (Weights missing)'}\")
+" 2>/dev/null || true
+    fi
+    echo ""
+
+    # Port and service status
+    echo "Network & Gateway Ports:"
+    echo "  Reaper Gateway : 127.0.0.1:61230"
+    echo "  Bridge Socket  : 127.0.0.1:61231"
+    echo "  LLAMA Server   : 127.0.0.1:61232"
+    echo ""
+
+    # Running processes
+    echo "Active Processes:"
+    local found=0
+    if pgrep -a -f 'cll-reaper' >/dev/null 2>&1; then
+        pgrep -a -f 'cll-reaper' | sed 's/^/  [Reaper] /'
+        found=1
+    fi
+    if pgrep -a -x 'llama-server' >/dev/null 2>&1; then
+        pgrep -a -x 'llama-server' | sed 's/^/  [LLAMA]  /'
+        found=1
+    fi
+    if pgrep -a -f 'cll.opencode_bridge' >/dev/null 2>&1; then
+        pgrep -a -f 'cll.opencode_bridge' | sed 's/^/  [Bridge] /'
+        found=1
+    fi
+    if [[ "${found}" -eq 0 ]]; then
+        echo "  (No active LLM processes running; starts on-demand via OpenCode or 'cll server')"
+    fi
+    echo ""
+
+    # GPU Memory
+    if command -v nvidia-smi >/dev/null 2>&1; then
+        echo "GPU Memory:"
+        nvidia-smi --query-gpu=name,memory.used,memory.total,utilization.gpu --format=csv,noheader | sed 's/^/  /'
+    fi
+}
+
+show_logs() {
+    if command -v journalctl >/dev/null 2>&1; then
+        journalctl --user -u cll-reaper.service "$@"
+    else
+        echo "journalctl not available." >&2
+    fi
+}
+
+# Parse global flags before command
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -m | --model)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: --model requires a model identifier argument." >&2
+                exit 1
+            fi
+            export CLL_MODEL="$2"
+            shift 2
+            ;;
+        -v | --version)
+            echo "cll v0.2.0 (Chat Local LLM)"
+            exit 0
+            ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
 
 command="${1:-}"
 [[ $# -gt 0 ]] && shift
@@ -38,6 +132,12 @@ case "${command}" in
         ;;
     stop)
         exec "${REPO_ROOT}/scripts/qstop" "$@"
+        ;;
+    status)
+        show_status
+        ;;
+    logs)
+        show_logs "$@"
         ;;
     search)
         exec "${REPO_ROOT}/torsearch" "$@"

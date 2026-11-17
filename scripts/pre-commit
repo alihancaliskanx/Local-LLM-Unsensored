@@ -68,7 +68,7 @@ print("🛡️  Qwen Security Audit: Scanning staged changes...", file=sys.stder
 output = ""
 llm_checked = False
 
-# 1. Try active llama-server first to avoid GPU contention
+# 1. Try active llama-server or reaper gateway first to avoid GPU contention
 try:
     req_data = json.dumps({
         "messages": [{"role": "user", "content": prompt}],
@@ -76,8 +76,9 @@ try:
         "max_tokens": 256,
         "stream": False
     }).encode("utf-8")
+    server_port = os.environ.get("LLAMA_PORT", "61232")
     req = urllib.request.Request(
-        "http://127.0.0.1:8080/v1/chat/completions",
+        f"http://127.0.0.1:{server_port}/v1/chat/completions",
         data=req_data,
         headers={"Content-Type": "application/json"},
         method="POST"

@@ -1,7 +1,7 @@
 # shell/cli.zsh — Terminal LLM runners (qwserver, qwcli, qwfile, qwsec, qwpipe)
 
 qwserver() {
-  local ctx_arg="32" port="8080" r_arg="2"
+  local ctx_arg="32" port="${LLAMA_PORT:-61232}" r_arg="2"
   local OPTIND=1 opt
   while getopts ":c:p:r:h-:" opt; do
     case "$opt" in

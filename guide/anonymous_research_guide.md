@@ -87,5 +87,5 @@ qwfile --web --keep --export /tmp/audit_report src/ "Perform full architecture a
 ## 5. Security & Isolation Guarantee
 
 1. **Zero Clearnet Fallback:** If Tor shuts down or the SOCKS5h socket on `127.0.0.1:9050` disconnects, all web operations instantly terminate with an `[OPSEC FAIL-CLOSED]` block. Traffic will never silently leak onto your standard network connection.
-2. **Local-Only LLM Inference:** All neural text generation is executed by `llama.cpp` using local CPU/GPU resources (`127.0.0.1:8080`). No prompts, code, or weights are shared with third-party cloud servers.
+2. **Local-Only LLM Inference:** All neural text generation is executed by `llama.cpp` using local CPU/GPU resources (`127.0.0.1:61232` direct or `61230` via `cll-reaper`). No prompts, code, or weights are shared with third-party cloud servers.
 3. **No Persistent Web Tracking:** Web scrapers (`cll/page_reader.py`) and search cascades strip cookies, cache data, and tracking headers. Each request uses a randomized User-Agent header.

@@ -10,7 +10,18 @@
       "fit_target": 768,
       "gpu_layers": "auto",
       "reasoning": true,
-      "description": "Default flagship: high-speed, uncensored systems analysis and coding"
+      "description": "Uncensored flagship: high-speed, unrestricted systems analysis"
+    },
+    "qwen2.5-coder-3b": {
+      "name": "Qwen2.5 Coder 3B Instruct (Aligned / Clean)",
+      "repo": "Qwen/Qwen2.5-Coder-3B-Instruct-GGUF",
+      "file": "qwen2.5-coder-3b-instruct-q4_k_m.gguf",
+      "parameters": "3B",
+      "context": 32768,
+      "fit_target": 512,
+      "gpu_layers": "auto",
+      "reasoning": false,
+      "description": "Best code & debug model for 4GB VRAM: 84.1% HumanEval, 100% GPU offload, ultra token-efficient"
     },
     "qwen2.5-coder-7b": {
       "name": "Qwen2.5 Coder 7B Instruct",

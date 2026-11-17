@@ -82,7 +82,8 @@ async def csrf_protection_middleware(request: Request, call_next):
     return await call_next(request)
 
 
-LLAMA_URL = "http://127.0.0.1:8080"
+LLAMA_PORT = os.environ.get("LLAMA_PORT", os.environ.get("PORT", "61232"))
+LLAMA_URL = f"http://127.0.0.1:{LLAMA_PORT}"
 LLAMA_UI_DIR = os.path.join(BASE_DIR, "web", "llama-ui")
 SHELL_HTML_PATH = os.path.join(BASE_DIR, "web", "cll_shell.html")
 
@@ -448,7 +449,7 @@ async def api_llm_start(request: Request):
     # Launch qwen-local server in detached background process with zero logging
     env = os.environ.copy()
     env["CTX"] = str(ctx)
-    env["PORT"] = "8080"
+    env["PORT"] = str(LLAMA_PORT)
     env["FIT_TARGET"] = os.environ.get("FIT_TARGET", "768")
 
     cmd = [
