@@ -516,6 +516,21 @@ class TestOpenCodeBridgeAndSearchSanitization(unittest.TestCase):
         self.assertNotIn("<|im_start|>", md)
         self.assertIn("[REDACTED_MALICIOUS_INSTRUCTION]", md)
 
+    def test_file_modification_directive_and_raw_write_recovery(self):
+        import json
+        from cll import opencode_bridge
+        self.assertIn("MANDATORY FILE CREATION & EDITING VIA TOOLS", opencode_bridge.AUTONOMOUS_TOR_DIRECTIVE)
+        self.assertIn("DIRECT TOOL CALL", opencode_bridge.AUTONOMOUS_TOR_DIRECTIVE)
+
+        raw = '{"name": "write", "arguments": {"path": "src/driver.c", "content": "int main() { return 0; }"}}'
+        parsed = opencode_bridge.try_parse_raw_json_tool_call(raw, {"write", "edit", "read", "shell"})
+        self.assertIsNotNone(parsed)
+        prefix, tc = parsed
+        self.assertEqual(prefix, "")
+        self.assertEqual(tc["function"]["name"], "write")
+        args_obj = json.loads(tc["function"]["arguments"])
+        self.assertEqual(args_obj["path"], "src/driver.c")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -15,8 +15,14 @@ wait_for_gpu
 
 PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}" LLAMA_SERVER_URL="http://${HOST}:${PORT}" \
     python3 -m cll.opencode_bridge >/dev/null 2>&1 &
+BRIDGE_PID=$!
 
-exec llama-server \
+cleanup() {
+    kill "${BRIDGE_PID}" 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
+llama-server \
     "${COMMON_ARGS[@]}" \
     --log-disable \
     -np "${PARALLEL_SLOTS}" \
