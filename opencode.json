@@ -26,7 +26,7 @@
       },
       "models": {
         "qwen3-4b": {
-          "name": "Qwen3-4B Unsensored",
+          "name": "Qwen3-4B Unsensored (Default)",
           "limit": {
             "context": 32768,
             "output": 8192
@@ -44,6 +44,49 @@
             { "id": "medium", "body": { "reasoning_effort": "medium" } },
             { "id": "high", "body": { "reasoning_effort": "high" } }
           ]
+        },
+        "qwen2.5-coder-7b": {
+          "name": "Qwen2.5-Coder-7B (Code Specialist)",
+          "limit": {
+            "context": 16384,
+            "output": 4096
+          },
+          "capabilities": {
+            "tools": true,
+            "temperature": true,
+            "reasoning": {
+              "supported": false
+            }
+          }
+        },
+        "deepseek-r1-1.5b": {
+          "name": "DeepSeek-R1-Distill-1.5B (Light Reasoning)",
+          "limit": {
+            "context": 32768,
+            "output": 8192
+          },
+          "capabilities": {
+            "tools": true,
+            "temperature": true,
+            "reasoning": {
+              "supported": true,
+              "effort": ["low", "medium", "high"]
+            }
+          }
+        },
+        "llama-3.1-8b": {
+          "name": "Llama-3.1-8B Instruct",
+          "limit": {
+            "context": 8192,
+            "output": 4096
+          },
+          "capabilities": {
+            "tools": true,
+            "temperature": true,
+            "reasoning": {
+              "supported": false
+            }
+          }
         }
       }
     }

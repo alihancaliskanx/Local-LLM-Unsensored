@@ -69,24 +69,35 @@ def check_tor_exit_ip() -> Dict[str, Any]:
 
 
 def check_llama_server() -> Dict[str, Any]:
-    """Checks whether local llama-server daemon is listening on port 8080."""
+    """Checks whether local llama-server or reaper gateway is reachable."""
+    target_url = os.environ.get("LLAMA_SERVER_URL", "http://127.0.0.1:61232")
+    reaper_url = os.environ.get("REAPER_URL", "http://127.0.0.1:61230")
     try:
         import requests
-        r = requests.get("http://127.0.0.1:8080/health", timeout=1.0)
+        r = requests.get(f"{target_url}/health", timeout=1.0)
         if r.status_code == 200:
             return {
                 "component": "llama-server Daemon",
-                "target": "127.0.0.1:8080",
+                "target": target_url.replace("http://", ""),
                 "status": "PASS",
                 "detail": "Healthy and ready for token inference"
+            }
+        # Check reaper on 61230
+        r_reap = requests.get(f"{reaper_url}/v1/models", timeout=1.0)
+        if r_reap.status_code in (200, 401):
+            return {
+                "component": "cll-reaper Gateway",
+                "target": reaper_url.replace("http://", ""),
+                "status": "PASS",
+                "detail": "Active and monitoring (LLM starts on-demand)"
             }
     except Exception:
         pass
     return {
-        "component": "llama-server Daemon",
-        "target": "127.0.0.1:8080",
+        "component": "LLM Backend & Gateway",
+        "target": target_url.replace("http://", ""),
         "status": "INFO",
-        "detail": "Offline (Starts on demand via 'qwserver' or CLL UI Power Bar)"
+        "detail": "Offline (Starts on demand via OpenCode or 'cll server')"
     }
 
 

@@ -1,0 +1,49 @@
+{
+  "default": "qwen3-4b",
+  "models": {
+    "qwen3-4b": {
+      "name": "Qwen3-4B Instruct Abliterated",
+      "repo": "mradermacher/Huihui-Qwen3-4B-Instruct-2507-abliterated-i1-GGUF",
+      "file": "Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf",
+      "parameters": "4B",
+      "context": 32768,
+      "fit_target": 768,
+      "gpu_layers": "auto",
+      "reasoning": true,
+      "description": "Default flagship: high-speed, uncensored systems analysis and coding"
+    },
+    "qwen2.5-coder-7b": {
+      "name": "Qwen2.5 Coder 7B Instruct",
+      "repo": "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
+      "file": "qwen2.5-coder-7b-instruct-q4_k_m.gguf",
+      "parameters": "7B",
+      "context": 16384,
+      "fit_target": 512,
+      "gpu_layers": "auto",
+      "reasoning": false,
+      "description": "Code specialist: C/C++, Rust, and complex architecture refactors"
+    },
+    "deepseek-r1-1.5b": {
+      "name": "DeepSeek R1 Distill Qwen 1.5B",
+      "repo": "bartowski/DeepSeek-R1-Distill-Qwen-1.5B-GGUF",
+      "file": "DeepSeek-R1-Distill-Qwen-1.5B-Q8_0.gguf",
+      "parameters": "1.5B",
+      "context": 32768,
+      "fit_target": 256,
+      "gpu_layers": "auto",
+      "reasoning": true,
+      "description": "Ultra-lightweight reasoning: fast logical deduction and mathematical reasoning"
+    },
+    "llama-3.1-8b": {
+      "name": "Llama 3.1 8B Instruct",
+      "repo": "bartowski/Meta-Llama-3.1-8B-Instruct-GGUF",
+      "file": "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
+      "parameters": "8B",
+      "context": 8192,
+      "fit_target": 512,
+      "gpu_layers": "auto",
+      "reasoning": false,
+      "description": "General open-weights benchmark model"
+    }
+  }
+}

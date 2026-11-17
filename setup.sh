@@ -10,6 +10,7 @@ COMMAND_NAME="qwen-local"
 TORSEARCH_NAME="torsearch"
 REAPER_NAME="cll-reaper"
 QSTOP_NAME="qstop"
+CLL_NAME="cll"
 BIN_DIR="${BIN_DIR:-${HOME}/.local/bin}"
 MAN_DIR="${MAN_DIR:-${HOME}/.local/share/man/man1}"
 TARGET="${REPO_ROOT}/${COMMAND_NAME}"
@@ -20,6 +21,8 @@ REAPER_TARGET="${REPO_ROOT}/tools/cll-reaper/target/release/${REAPER_NAME}"
 REAPER_LINK="${BIN_DIR}/${REAPER_NAME}"
 QSTOP_TARGET="${REPO_ROOT}/scripts/${QSTOP_NAME}"
 QSTOP_LINK="${BIN_DIR}/${QSTOP_NAME}"
+CLL_TARGET="${REPO_ROOT}/bin/${CLL_NAME}"
+CLL_LINK="${BIN_DIR}/${CLL_NAME}"
 LEGACY_LINK="${BIN_DIR}/glm"
 
 usage() {
@@ -181,6 +184,19 @@ link_command() {
         fi
     fi
 
+    if [[ -f "${CLL_TARGET}" ]]; then
+        if [[ -L "${CLL_LINK}" && "$(readlink -f "${CLL_LINK}")" == "${CLL_TARGET}" ]]; then
+            echo "Command: already linked at ${CLL_LINK}"
+        elif [[ -e "${CLL_LINK}" || -L "${CLL_LINK}" ]]; then
+            ln -sf "${CLL_TARGET}" "${CLL_LINK}"
+            echo "Command: linked ${CLL_LINK} -> ${CLL_TARGET}"
+        else
+            mkdir -p "${BIN_DIR}"
+            ln -s "${CLL_TARGET}" "${CLL_LINK}"
+            echo "Command: linked ${CLL_LINK} -> ${CLL_TARGET}"
+        fi
+    fi
+
     case ":${PATH}:" in
         *":${BIN_DIR}:"*) ;;
         *) echo "Warning: ${BIN_DIR} is not in PATH; add it to run '${COMMAND_NAME}' from any directory." >&2 ;;
@@ -238,6 +254,11 @@ unlink_command() {
     if [[ -L "${QSTOP_LINK}" && "$(readlink -f "${QSTOP_LINK}")" == "${QSTOP_TARGET}" ]]; then
         rm "${QSTOP_LINK}"
         echo "Command: removed ${QSTOP_LINK}"
+        removed=1
+    fi
+    if [[ -L "${CLL_LINK}" && "$(readlink -f "${CLL_LINK}")" == "${CLL_TARGET}" ]]; then
+        rm "${CLL_LINK}"
+        echo "Command: removed ${CLL_LINK}"
         removed=1
     fi
     if [[ -L "${LEGACY_LINK}" ]]; then

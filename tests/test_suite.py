@@ -577,6 +577,28 @@ class TestOpenCodeBridgeAndSearchSanitization(unittest.TestCase):
         res = subprocess.run([qwen_local_path, "help"], capture_output=True, text=True)
         self.assertIn("stop", res.stdout)
 
+    def test_model_manager_and_manifest(self):
+        from cll import model_manager
+        manifest = model_manager.load_manifest()
+        self.assertIn("models", manifest)
+        self.assertIn("qwen3-4b", manifest["models"])
+        info = model_manager.get_model_info("qwen3-4b")
+        self.assertEqual(info["context"], 32768)
+        self.assertEqual(info["id"], "qwen3-4b")
+
+    def test_bin_cll_cli_executable_and_help(self):
+        import subprocess, os
+        repo_root = os.path.dirname(os.path.dirname(__file__))
+        cll_bin = os.path.join(repo_root, "bin", "cll")
+        self.assertTrue(os.path.isfile(cll_bin))
+        self.assertTrue(os.access(cll_bin, os.X_OK))
+        res = subprocess.run([cll_bin, "help"], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0)
+        self.assertIn("cll — Chat Local LLM", res.stdout)
+        self.assertIn("server", res.stdout)
+        self.assertIn("chat", res.stdout)
+        self.assertIn("model", res.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

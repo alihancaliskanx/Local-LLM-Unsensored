@@ -49,8 +49,11 @@ When running `Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf` (~2.5 GB
 
 | Path | Description |
 | :--- | :--- |
-| `setup.sh` | One-time setup: installs `llama.cpp`, downloads the model, and links `qwen-local`, `torsearch`, `qstop`, and `cll-reaper` into `~/.local/bin` |
-| `qwen-local` | Command entry point: dispatches `server`, `cli`, and `stop` to `scripts/` |
+| `setup.sh` | One-time setup: installs `llama.cpp`, downloads the model, and links `cll`, `qwen-local`, `torsearch`, `qstop`, and `cll-reaper` into `~/.local/bin` |
+| `bin/cll` | Unified CLI entry point: server, chat, stop, search, model management, and doctor diagnostics |
+| `models.json` | Multi-model manifest defining parameters, contexts, VRAM fit margins, and HuggingFace repositories |
+| `cll/model_manager.py` | Multi-model profile manager for listing, switching, and downloading GGUF models |
+| `qwen-local` | Command entry point: dispatches `server`, `cli`, and `stop` to `scripts/` (retained for backward compatibility) |
 | `torsearch` | Fast standalone CLI launcher for privacy-preserving raw Tor search used by OpenCode and scripts |
 | `opencode.json` | Preconfigured OpenCode agent definition file (local provider, autonomous Tor tools, and policies) |
 | `tools/cll-reaper/` | Minimal (2.4 MB RAM) Rust watchdog daemon, on-demand lazy starter, authentication gateway, and idle VRAM reaper |

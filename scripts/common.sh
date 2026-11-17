@@ -3,12 +3,32 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
+# Resolve active model configuration via model_manager if not explicitly provided
+if [[ -z "${MODEL_PATH:-}" ]] && command -v python3 >/dev/null 2>&1; then
+    eval "$(PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}" python3 -m cll.model_manager env 2>/dev/null || true)"
+fi
+
 MODEL_FILE="Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf"
 MODEL_PATH="${MODEL_PATH:-${REPO_ROOT}/${MODEL_FILE}}"
 GPU_LAYERS="${NGL:-auto}"
 FIT_MARGIN="${FIT_TARGET:-768}"
 CTX_SIZE="${CTX:-32768}"
-THREADS="${THREADS:-6}"
+
+# Auto-detect CPU threads for cross-machine compatibility
+if [[ -z "${THREADS:-}" ]]; then
+    if command -v nproc >/dev/null 2>&1; then
+        _CORES="$(nproc)"
+        if [[ "${_CORES}" -gt 8 ]]; then
+            THREADS=8
+        elif [[ "${_CORES}" -gt 0 ]]; then
+            THREADS="${_CORES}"
+        else
+            THREADS=4
+        fi
+    else
+        THREADS=4
+    fi
+fi
 
 # shellcheck disable=SC2034 # used by the scripts that source this file
 COMMON_ARGS=(

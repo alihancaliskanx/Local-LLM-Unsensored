@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+usage() {
+    cat <<EOF
+cll — Chat Local LLM: Unified CLI & Multi-Model Runner
+
+Usage: cll <command> [options...]
+
+Core Commands:
+  server       Start llama-server, agent bridge, and background watchdog
+  chat, cli    Start an interactive terminal chat with llama-cli
+  stop         Safely terminate all active server, bridge, and CLI processes
+  search       Privacy-preserving raw Tor web & dark web search (torsearch)
+  model        Manage multi-model profiles (list, use, pull, current)
+  doctor       Run system diagnostics (health, GPU memory, ports)
+  help         Show this help message
+
+Options after the command are passed to llama.cpp unchanged.
+Runtime defaults can be overridden with environment variables, e.g.:
+  CTX=32768 cll server
+  cll model use qwen2.5-coder-7b
+EOF
+}
+
+command="${1:-}"
+[[ $# -gt 0 ]] && shift
+
+case "${command}" in
+    server)
+        exec "${REPO_ROOT}/scripts/run-server.sh" "$@"
+        ;;
+    chat | cli)
+        exec "${REPO_ROOT}/scripts/run-cli.sh" "$@"
+        ;;
+    stop)
+        exec "${REPO_ROOT}/scripts/qstop" "$@"
+        ;;
+    search)
+        exec "${REPO_ROOT}/torsearch" "$@"
+        ;;
+    model)
+        PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}" exec python3 -m cll.model_manager "$@"
+        ;;
+    doctor)
+        PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}" exec python3 -m cll.doctor "$@"
+        ;;
+    help | -h | --help)
+        usage
+        ;;
+    "")
+        usage >&2
+        exit 1
+        ;;
+    *)
+        echo "Error: Unknown command '${command}'" >&2
+        usage >&2
+        exit 1
+        ;;
+esac
