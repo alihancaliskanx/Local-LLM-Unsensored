@@ -1,0 +1,19 @@
+[Unit]
+Description=CLL Reaper - Lightweight On-Demand Gateway & Idle Reaper for Local LLM
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/cll-reaper
+Restart=on-failure
+RestartSec=3
+Environment=REAPER_BIND=127.0.0.1:61230
+Environment=BACKEND_TARGET=127.0.0.1:61231
+Environment=LLAMA_TARGET=127.0.0.1:61232
+Environment=REAPER_API_KEY=cll-local-sec-98f2b
+Environment=LLM_IDLE_TIMEOUT=900
+Environment=LAUNCH_CMD="OPENCODE_BRIDGE_PORT=61231 PORT=61232 %h/.local/bin/qwen-local server"
+Environment=STOP_CMD="%h/.local/bin/qstop"
+
+[Install]
+WantedBy=default.target

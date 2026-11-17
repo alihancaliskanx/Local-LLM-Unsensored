@@ -49,19 +49,22 @@ When running `Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_K_M.gguf` (~2.5 GB
 
 | Path | Description |
 | :--- | :--- |
-| `setup.sh` | One-time setup: installs `llama.cpp`, downloads the model, and links the `qwen-local` and `torsearch` commands into `~/.local/bin` |
-| `qwen-local` | Command entry point: dispatches `qwen-local server` and `qwen-local cli` to `scripts/` |
+| `setup.sh` | One-time setup: installs `llama.cpp`, downloads the model, and links `qwen-local`, `torsearch`, `qstop`, and `cll-reaper` into `~/.local/bin` |
+| `qwen-local` | Command entry point: dispatches `server`, `cli`, and `stop` to `scripts/` |
 | `torsearch` | Fast standalone CLI launcher for privacy-preserving raw Tor search used by OpenCode and scripts |
 | `opencode.json` | Preconfigured OpenCode agent definition file (local provider, autonomous Tor tools, and policies) |
+| `tools/cll-reaper/` | Minimal (2.4 MB RAM) Rust watchdog daemon, on-demand lazy starter, authentication gateway, and idle VRAM reaper |
+| `scripts/cll-reaper.service` | User-level systemd service definition for automatic background cll-reaper management |
+| `scripts/qstop` | Standalone process terminator safely shutting down active `llama-server`, `llama-cli`, and `opencode_bridge` |
 | `qwen.zsh` | Shell entry point sourcing modular helper scripts under `shell/` |
-| `shell/core.zsh` | Shared context/reasoning resolvers (`32K` default, `48K` ceiling) and `qstop` (cleans llama and bridge daemons) |
+| `shell/core.zsh` | Shared context/reasoning resolvers (`32K` default, `48K` ceiling) and shell helper functions |
 | `shell/cli.zsh` | Terminal functions (`qwserver`, `qwcli`, `qwfile`, `qwsec`, `qwpipe`) using `-f` file input to bypass the 128 KiB kernel argument limit |
 | `shell/web.zsh` | Tor web search (`qwsearch`) and Chat Local LLM (`cll`) launchers |
 | `scripts/common.sh` | Shared runtime defaults (`CTX=32768`, `-ctk q4_0 -ctv q4_0`) and GPU/binary checks |
-| `scripts/run-server.sh` | Launches `llama-server` on `127.0.0.1:8080` and background `cll.opencode_bridge` on `127.0.0.1:8081` |
+| `scripts/run-server.sh` | Launches `llama-server` on `127.0.0.1:61232` and background `cll.opencode_bridge` on `127.0.0.1:61231` |
 | `scripts/run-cli.sh` | Launches interactive or single-turn chat via `llama-cli` (loads `prompts/cli_rules.md`) |
 | `scripts/pre-commit` | Git pre-commit hook scanning diffs for secrets and security flaws via active server or CLI |
-| `cll/opencode_bridge.py` | Lightweight OpenAI-compatible gateway (`127.0.0.1:8081`) for OpenCode with prompt pruning and Tor search injection |
+| `cll/opencode_bridge.py` | Lightweight OpenAI-compatible gateway (`127.0.0.1:61231`) for OpenCode with prompt pruning and Tor search injection |
 | `cll/inference.py` | Unified terminal inference engine routing CLI commands to active server HTTP or CLI fallback |
 | `cll/project_analyzer.py` | Hierarchical codebase explorer & chunked module analyst with `/tmp/local-llm/` note-taking |
 | `cll/symbol_resolver.py` | In-memory C/C++ `#include` and Python `import` symbol table resolver with relevance filtering |
@@ -432,7 +435,7 @@ llama-server -hf mradermacher/Huihui-Qwen3-4B-Instruct-2507-abliterated-i1-GGUF 
 
 ### E. OpenCode Autonomous Coding Agent Integration
 
-The suite includes native, turnkey compatibility with the [OpenCode](https://opencode.ai) autonomous coding agent CLI and desktop interface via `cll.opencode_bridge`.
+The suite includes native, turnkey compatibility with the [OpenCode](https://opencode.ai) autonomous coding agent CLI and desktop interface via `cll.opencode_bridge` and `cll-reaper`.
 
 #### Architecture & Capabilities
 
@@ -440,7 +443,16 @@ The suite includes native, turnkey compatibility with the [OpenCode](https://ope
 +-------------------------------------------------------------+
 |                     OpenCode CLI / TUI                      |
 +-------------------------------------------------------------+
-                              | HTTP (Port 8081)
+                              | HTTP (Port 61230 + Bearer Auth)
+                              v
++-------------------------------------------------------------+
+|                        cll-reaper                           |
+|  - Minimal (2.4 MB RSS) Rust watchdog & auth gateway        |
+|  - Verifies local Authorization token (drops 401 unauth)   |
+|  - Lazy on-demand auto-starter for backend (~2.5s)          |
+|  - 15-minute idle VRAM reaper (triggers qstop)              |
++-------------------------------------------------------------+
+                              | HTTP (Port 61231)
                               v
 +-------------------------------------------------------------+
 |                   cll.opencode_bridge                       |
@@ -450,18 +462,20 @@ The suite includes native, turnkey compatibility with the [OpenCode](https://ope
 |  - Translates tor_search -> shell (torsearch ...)           |
 |  - Recovers raw JSON tool calls emitted without XML tags    |
 |  - Maps reasoning effort ('low', 'medium', 'high')          |
+|  - Retries connection while llama-server allocates CUDA     |
 +-------------------------------------------------------------+
-                              | HTTP (Port 8080)
+                              | HTTP (Port 61232)
                               v
 +-------------------------------------------------------------+
 |                  llama-server (Qwen3-4B)                    |
 +-------------------------------------------------------------+
 ```
 
-1. **Automatic Daemon Startup:** Launching `qwen-local server` or `qwserver` automatically starts `cll.opencode_bridge` on `http://127.0.0.1:8081` alongside `llama-server` on port `8080`.
-2. **Context Preservation:** Strips unnecessary cloud agent prompts, unused desktop skills, and container boilerplate, freeing up ~2,000 tokens of context.
-3. **Autonomous Tor Web Search:** The agent is empowered with real-time web, GitHub, ArXiv, and `.onion` dark web search routed 100% over Tor SOCKS5h. Tool calls to `tor_search` are automatically rewritten into local `torsearch` shell calls with prompt injection defenses.
-4. **Resilient Tool Parsing:** Recovers raw JSON function calls when the model emits valid tool calls without explicit `<tool_call>` XML wrappers.
+1. **Automatic Gateway Startup:** Running `cll-reaper` as a user service (`cll-reaper.service`) or standalone process listens on `127.0.0.1:61230`. OpenCode requests automatically launch the backend on ports `61231` (bridge) and `61232` (llama-server) without pre-allocating GPU memory.
+2. **Local Authorization Protection:** Protects against unauthorized local loopback requests (CSRF, DNS rebinding, or stray scripts). Requests lacking `Authorization: Bearer <token>` are dropped with `401 Unauthorized` without waking the model or consuming VRAM.
+3. **Context Preservation:** Strips unnecessary cloud agent prompts, unused desktop skills, and container boilerplate, freeing up ~2,000 tokens of context.
+4. **Autonomous Tor Web Search:** The agent is empowered with real-time web, GitHub, ArXiv, and `.onion` dark web search routed 100% over Tor SOCKS5h. Tool calls to `tor_search` are automatically rewritten into local `torsearch` shell calls with prompt injection defenses.
+5. **Resilient Tool Parsing:** Recovers raw JSON function calls when the model emits valid tool calls without explicit `<tool_call>` XML wrappers.
 
 #### Configuration (`opencode.json`)
 
@@ -491,8 +505,8 @@ The repository includes a ready-to-use `opencode.json` configuring the local pro
       "name": "Local CLL (Qwen3-4B)",
       "package": "@ai-sdk/openai-compatible",
       "settings": {
-        "baseURL": "http://127.0.0.1:8081/v1",
-        "apiKey": "local"
+        "baseURL": "http://127.0.0.1:61230/v1",
+        "apiKey": "cll-local-sec-98f2b"
       },
       "models": {
         "qwen3-4b": {
@@ -524,13 +538,7 @@ The repository includes a ready-to-use `opencode.json` configuring the local pro
 
 #### Running OpenCode with Local Qwen3-4B
 
-Start the backend:
-
-```bash
-qwserver -c 32 -r 2
-```
-
-In your terminal or project directory, launch OpenCode:
+In your terminal or project directory, simply launch OpenCode:
 
 ```bash
 opencode run "Audit memory safety and concurrency risks in src/driver.c"
@@ -539,6 +547,30 @@ opencode run "Audit memory safety and concurrency risks in src/driver.c"
 ```bash
 opencode
 ```
+
+#### On-Demand Lazy Auto-Start & Idle Reaper (`cll-reaper`)
+
+Rather than leaving `llama-server` holding 2.8 GB VRAM all day or manually managing server lifecycles, run the minimal (2.4 MB RAM) Rust watchdog daemon:
+
+```bash
+cll-reaper
+```
+
+Or enable it as a systemd user service:
+
+```bash
+systemctl --user enable --now cll-reaper.service
+```
+
+- **Listening Port:** `127.0.0.1:61230` (standard OpenCode target).
+- **Auto-Start:** When OpenCode dispatches a prompt, `cll-reaper` detects if the backend is down and spawns it in the background in ~2.5 seconds.
+- **Idle Reaper:** When no requests arrive for `LLM_IDLE_TIMEOUT` seconds (default: 900s / 15 minutes), `cll-reaper` automatically executes `qstop`, completely releasing GPU memory.
+- **Configurable Environment Variables:**
+  - `REAPER_BIND`: External listen socket (default: `127.0.0.1:61230`).
+  - `BACKEND_TARGET`: Internal bridge forwarding address (default: `127.0.0.1:61231`).
+  - `LLAMA_TARGET`: Core LLM server address (default: `127.0.0.1:61232`).
+  - `REAPER_API_KEY`: Local authorization token (default: `cll-local-sec-98f2b`).
+  - `LLM_IDLE_TIMEOUT`: Inactivity timeout in seconds (default: `900`, `0` to disable auto-shutdown).
 
 ### F. Docker Execution (Optional)
 

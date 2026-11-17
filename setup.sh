@@ -8,12 +8,18 @@ source "${SCRIPT_DIR}/scripts/common.sh"
 MODEL_REPO="mradermacher/Huihui-Qwen3-4B-Instruct-2507-abliterated-i1-GGUF"
 COMMAND_NAME="qwen-local"
 TORSEARCH_NAME="torsearch"
+REAPER_NAME="cll-reaper"
+QSTOP_NAME="qstop"
 BIN_DIR="${BIN_DIR:-${HOME}/.local/bin}"
 MAN_DIR="${MAN_DIR:-${HOME}/.local/share/man/man1}"
-TARGET="${SCRIPT_DIR}/${COMMAND_NAME}"
+TARGET="${REPO_ROOT}/${COMMAND_NAME}"
 LINK="${BIN_DIR}/${COMMAND_NAME}"
-TORSEARCH_TARGET="${SCRIPT_DIR}/${TORSEARCH_NAME}"
+TORSEARCH_TARGET="${REPO_ROOT}/${TORSEARCH_NAME}"
 TORSEARCH_LINK="${BIN_DIR}/${TORSEARCH_NAME}"
+REAPER_TARGET="${REPO_ROOT}/tools/cll-reaper/target/release/${REAPER_NAME}"
+REAPER_LINK="${BIN_DIR}/${REAPER_NAME}"
+QSTOP_TARGET="${REPO_ROOT}/scripts/${QSTOP_NAME}"
+QSTOP_LINK="${BIN_DIR}/${QSTOP_NAME}"
 LEGACY_LINK="${BIN_DIR}/glm"
 
 usage() {
@@ -24,10 +30,10 @@ Without arguments, installs everything needed to run '${COMMAND_NAME}'. Steps th
 already done are skipped, so it is safe to run again:
   1. llama-cpp and a ggml GPU backend via pacman (asks for sudo)
   2. ${MODEL_FILE} from ${MODEL_REPO} (resumes a partial download)
-  3. '${COMMAND_NAME}' and '${TORSEARCH_NAME}' links in ${BIN_DIR}
+  3. '${COMMAND_NAME}', '${TORSEARCH_NAME}', and '${REAPER_NAME}' links in ${BIN_DIR}
   4. manual pages (man1) linked into ${MAN_DIR}
 
-  --uninstall   Remove '${COMMAND_NAME}', '${TORSEARCH_NAME}', and manpage links. Packages and the model are kept.
+  --uninstall   Remove '${COMMAND_NAME}', '${TORSEARCH_NAME}', '${REAPER_NAME}', and manpage links. Packages and the model are kept.
 
 Environment:
   BACKEND      cuda or vulkan (default: cuda if nvidia-smi exists, otherwise vulkan)
@@ -112,6 +118,19 @@ clean_legacy_link() {
     fi
 }
 
+build_reaper() {
+    if ! command -v cargo >/dev/null 2>&1; then
+        echo "cll-reaper: cargo not found; skipping Rust reaper compilation"
+        return 0
+    fi
+    if [[ -f "${REAPER_TARGET}" ]]; then
+        echo "cll-reaper: already built at ${REAPER_TARGET}"
+        return 0
+    fi
+    echo "cll-reaper: compiling minimal Rust daemon in release mode..."
+    cargo build --release --manifest-path "${REPO_ROOT}/tools/cll-reaper/Cargo.toml" --quiet
+}
+
 link_command() {
     clean_legacy_link
     if is_our_link; then
@@ -136,6 +155,32 @@ link_command() {
         echo "Command: linked ${TORSEARCH_LINK} -> ${TORSEARCH_TARGET}"
     fi
 
+    if [[ -f "${REAPER_TARGET}" ]]; then
+        if [[ -L "${REAPER_LINK}" && "$(readlink -f "${REAPER_LINK}")" == "${REAPER_TARGET}" ]]; then
+            echo "Command: already linked at ${REAPER_LINK}"
+        elif [[ -e "${REAPER_LINK}" || -L "${REAPER_LINK}" ]]; then
+            ln -sf "${REAPER_TARGET}" "${REAPER_LINK}"
+            echo "Command: linked ${REAPER_LINK} -> ${REAPER_TARGET}"
+        else
+            mkdir -p "${BIN_DIR}"
+            ln -s "${REAPER_TARGET}" "${REAPER_LINK}"
+            echo "Command: linked ${REAPER_LINK} -> ${REAPER_TARGET}"
+        fi
+    fi
+
+    if [[ -f "${QSTOP_TARGET}" ]]; then
+        if [[ -L "${QSTOP_LINK}" && "$(readlink -f "${QSTOP_LINK}")" == "${QSTOP_TARGET}" ]]; then
+            echo "Command: already linked at ${QSTOP_LINK}"
+        elif [[ -e "${QSTOP_LINK}" || -L "${QSTOP_LINK}" ]]; then
+            ln -sf "${QSTOP_TARGET}" "${QSTOP_LINK}"
+            echo "Command: linked ${QSTOP_LINK} -> ${QSTOP_TARGET}"
+        else
+            mkdir -p "${BIN_DIR}"
+            ln -s "${QSTOP_TARGET}" "${QSTOP_LINK}"
+            echo "Command: linked ${QSTOP_LINK} -> ${QSTOP_TARGET}"
+        fi
+    fi
+
     case ":${PATH}:" in
         *":${BIN_DIR}:"*) ;;
         *) echo "Warning: ${BIN_DIR} is not in PATH; add it to run '${COMMAND_NAME}' from any directory." >&2 ;;
@@ -143,7 +188,7 @@ link_command() {
 }
 
 link_man_pages() {
-    local src_dir="${SCRIPT_DIR}/man/man1"
+    local src_dir="${REPO_ROOT}/man/man1"
     if [[ -d "${src_dir}" ]]; then
         mkdir -p "${MAN_DIR}"
         for manfile in "${src_dir}"/*.1; do
@@ -158,7 +203,7 @@ link_man_pages() {
 }
 
 unlink_man_pages() {
-    local src_dir="${SCRIPT_DIR}/man/man1"
+    local src_dir="${REPO_ROOT}/man/man1"
     if [[ -d "${src_dir}" && -d "${MAN_DIR}" ]]; then
         for manfile in "${src_dir}"/*.1; do
             [[ -f "${manfile}" ]] || continue
@@ -185,10 +230,20 @@ unlink_command() {
         echo "Command: removed ${TORSEARCH_LINK}"
         removed=1
     fi
+    if [[ -L "${REAPER_LINK}" && "$(readlink -f "${REAPER_LINK}")" == "${REAPER_TARGET}" ]]; then
+        rm "${REAPER_LINK}"
+        echo "Command: removed ${REAPER_LINK}"
+        removed=1
+    fi
+    if [[ -L "${QSTOP_LINK}" && "$(readlink -f "${QSTOP_LINK}")" == "${QSTOP_TARGET}" ]]; then
+        rm "${QSTOP_LINK}"
+        echo "Command: removed ${QSTOP_LINK}"
+        removed=1
+    fi
     if [[ -L "${LEGACY_LINK}" ]]; then
         local dest
         dest="$(readlink -f "${LEGACY_LINK}")" || true
-        if [[ "${dest}" == "${SCRIPT_DIR}/glm" || "${dest}" == "${TARGET}" ]]; then
+        if [[ "${dest}" == "${REPO_ROOT}/glm" || "${dest}" == "${TARGET}" ]]; then
             rm "${LEGACY_LINK}"
             echo "Command: removed legacy link ${LEGACY_LINK}"
             removed=1
@@ -204,6 +259,7 @@ case "${1:-}" in
     "")
         install_llama_cpp
         download_model
+        build_reaper
         link_command
         link_man_pages
         echo "Setup complete. Start with '${COMMAND_NAME} server' or '${COMMAND_NAME} cli'."

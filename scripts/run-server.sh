@@ -7,13 +7,15 @@ source "${SCRIPT_DIR}/common.sh"
 
 PARALLEL_SLOTS="${PARALLEL:-1}"
 HOST="${HOST:-127.0.0.1}"
-PORT="${PORT:-8080}"
+PORT="${PORT:-61232}"
 
 require_model
 require_binary llama-server
 wait_for_gpu
 
-PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}" LLAMA_SERVER_URL="http://${HOST}:${PORT}" \
+OPENCODE_BRIDGE_PORT="${OPENCODE_BRIDGE_PORT:-61231}" \
+PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}" \
+LLAMA_SERVER_URL="http://${HOST}:${PORT}" \
     python3 -m cll.opencode_bridge >/dev/null 2>&1 &
 BRIDGE_PID=$!
 

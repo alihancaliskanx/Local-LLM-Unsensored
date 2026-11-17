@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+killed=0
+if pkill -x 'llama-server' 2>/dev/null; then
+    killed=1
+fi
+if pkill -x 'llama-cli' 2>/dev/null; then
+    killed=1
+fi
+if pkill -f 'cll.opencode_bridge' 2>/dev/null; then
+    killed=1
+fi
+
+if [[ "${killed}" -eq 1 ]]; then
+    echo "Local LLM processes stopped."
+else
+    echo "No active processes found."
+fi

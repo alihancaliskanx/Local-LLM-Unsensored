@@ -10,6 +10,7 @@ Usage: qwen-local <command> [llama.cpp options...]
 Commands:
   server    Start llama-server with the Web UI and OpenAI-compatible API
   cli       Start an interactive terminal chat with llama-cli
+  stop      Safely terminate active server, CLI, and bridge processes
   help      Show this help
 
 Options after the command are passed to llama.cpp unchanged.
@@ -24,6 +25,7 @@ command="${1:-}"
 case "${command}" in
     server) exec "${SCRIPT_DIR}/scripts/run-server.sh" "$@" ;;
     cli) exec "${SCRIPT_DIR}/scripts/run-cli.sh" "$@" ;;
+    stop) exec "${SCRIPT_DIR}/scripts/qstop" "$@" ;;
     help | -h | --help) usage ;;
     "")
         usage >&2

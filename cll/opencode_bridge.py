@@ -20,9 +20,9 @@ from typing import Dict, Any, List, Optional, Tuple, Set
 
 import requests
 
-LLAMA_BASE_URL = os.environ.get("LLAMA_SERVER_URL", "http://127.0.0.1:8080")
+LLAMA_BASE_URL = os.environ.get("LLAMA_SERVER_URL", "http://127.0.0.1:61232")
 BRIDGE_HOST = os.environ.get("OPENCODE_BRIDGE_HOST", "127.0.0.1")
-BRIDGE_PORT = int(os.environ.get("OPENCODE_BRIDGE_PORT", "8081"))
+BRIDGE_PORT = int(os.environ.get("OPENCODE_BRIDGE_PORT", "61231"))
 
 BLOCKED_TOOLS = {
     "experimental_image_generate",
@@ -205,6 +205,45 @@ def try_parse_raw_json_tool_call(text: str, valid_tool_names: set) -> Optional[T
     return None
 
 
+def forward_request_with_retry(
+    method: str,
+    url: str,
+    max_retries: int = 15,
+    delay: float = 0.5,
+    on_wait: Optional[Any] = None,
+    **kwargs
+) -> requests.Response:
+    """Retries HTTP request if downstream LLAMA server is still initializing its socket."""
+    last_err: Optional[Exception] = None
+    for attempt in range(max_retries):
+        try:
+            resp = requests.request(method, url, **kwargs)
+            if resp.status_code == 503 and b"Loading model" in resp.content:
+                if attempt < max_retries - 1:
+                    if on_wait:
+                        try:
+                            on_wait()
+                        except Exception:
+                            pass
+                    time.sleep(delay)
+                    continue
+            return resp
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            last_err = e
+            if attempt < max_retries - 1:
+                if on_wait:
+                    try:
+                        on_wait()
+                    except Exception:
+                        pass
+                time.sleep(delay)
+            else:
+                raise last_err
+    if last_err:
+        raise last_err
+    raise RuntimeError("Unexpected retry failure")
+
+
 class OpenCodeBridgeHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -214,7 +253,7 @@ class OpenCodeBridgeHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         target_url = f"{LLAMA_BASE_URL}{self.path}"
         try:
-            resp = requests.get(target_url, timeout=10)
+            resp = forward_request_with_retry("GET", target_url, max_retries=15, delay=0.5, timeout=10)
             self.send_response(resp.status_code)
             self.send_header("Content-Type", resp.headers.get("Content-Type", "application/json"))
             self.send_header("Content-Length", str(len(resp.content)))
@@ -245,7 +284,7 @@ class OpenCodeBridgeHandler(BaseHTTPRequestHandler):
 
         if not is_stream:
             try:
-                resp = requests.post(target_url, json=data, timeout=300)
+                resp = forward_request_with_retry("POST", target_url, max_retries=20, delay=0.5, json=data, timeout=300)
                 resp_data = resp.json()
                 if has_tools:
                     choices = resp_data.get("choices", [])
@@ -279,7 +318,7 @@ class OpenCodeBridgeHandler(BaseHTTPRequestHandler):
 
         # Streaming SSE handling
         try:
-            resp = requests.post(target_url, json=data, stream=True, timeout=(10, 600))
+            resp = forward_request_with_retry("POST", target_url, max_retries=20, delay=0.5, json=data, stream=True, timeout=(10, 600))
         except Exception as e:
             err = json.dumps({"error": {"message": str(e)}}).encode("utf-8")
             self.send_response(502)
@@ -520,7 +559,7 @@ class OpenCodeBridgeHandler(BaseHTTPRequestHandler):
 def main() -> None:
     parser = argparse.ArgumentParser(description="OpenCode Agent Bridge for Local Qwen3-4B + Tor Search")
     parser.add_argument("--host", default=BRIDGE_HOST, help="Bind host (default: 127.0.0.1)")
-    parser.add_argument("--port", type=int, default=BRIDGE_PORT, help="Bind port (default: 8081)")
+    parser.add_argument("--port", type=int, default=BRIDGE_PORT, help="Bind port (default: 61231)")
     args = parser.parse_args()
 
     # Check if port is already bound

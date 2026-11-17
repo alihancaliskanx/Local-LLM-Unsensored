@@ -531,6 +531,52 @@ class TestOpenCodeBridgeAndSearchSanitization(unittest.TestCase):
         args_obj = json.loads(tc["function"]["arguments"])
         self.assertEqual(args_obj["path"], "src/driver.c")
 
+    def test_cll_reaper_binary_and_help(self):
+        import subprocess, os
+        reaper_bin = os.path.join(os.path.dirname(os.path.dirname(__file__)), "tools/cll-reaper/target/release/cll-reaper")
+        if os.path.exists(reaper_bin):
+            res = subprocess.run([reaper_bin, "--help"], capture_output=True, text=True)
+            self.assertEqual(res.returncode, 0)
+            self.assertIn("cll-reaper", res.stdout)
+            self.assertIn("REAPER_BIND", res.stdout)
+            self.assertIn("LLAMA_TARGET", res.stdout)
+            self.assertIn("REAPER_API_KEY", res.stdout)
+            self.assertIn("61230", res.stdout)
+            self.assertIn("61231", res.stdout)
+            self.assertIn("61232", res.stdout)
+            self.assertIn("LLM_IDLE_TIMEOUT", res.stdout)
+
+    def test_forward_request_with_retry(self):
+        from unittest.mock import patch, MagicMock
+        from cll import opencode_bridge
+        import requests
+
+        call_count = 0
+        def fake_request(method, url, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise requests.exceptions.ConnectionError("Refused")
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            return mock_resp
+
+        with patch("requests.request", side_effect=fake_request):
+            resp = opencode_bridge.forward_request_with_retry("GET", "http://127.0.0.1:8080/test", max_retries=5, delay=0.01)
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(call_count, 3)
+
+    def test_qstop_script_and_qwen_local_stop(self):
+        import subprocess, os
+        repo_root = os.path.dirname(os.path.dirname(__file__))
+        qstop_path = os.path.join(repo_root, "scripts", "qstop")
+        self.assertTrue(os.path.isfile(qstop_path))
+        self.assertTrue(os.access(qstop_path, os.X_OK))
+
+        qwen_local_path = os.path.join(repo_root, "qwen-local")
+        res = subprocess.run([qwen_local_path, "help"], capture_output=True, text=True)
+        self.assertIn("stop", res.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

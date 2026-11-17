@@ -21,8 +21,8 @@
       "name": "Local CLL (Qwen3-4B)",
       "package": "@ai-sdk/openai-compatible",
       "settings": {
-        "baseURL": "http://127.0.0.1:8081/v1",
-        "apiKey": "local"
+        "baseURL": "http://127.0.0.1:61230/v1",
+        "apiKey": "cll-local-sec-98f2b"
       },
       "models": {
         "qwen3-4b": {
