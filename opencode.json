@@ -25,8 +25,22 @@
         "apiKey": "cll-local-sec-98f2b"
       },
       "models": {
+        "qwen2.5-coder-3b": {
+          "name": "Qwen2.5-Coder-3B (Clean Code & Debug)",
+          "limit": {
+            "context": 32768,
+            "output": 8192
+          },
+          "capabilities": {
+            "tools": true,
+            "temperature": true,
+            "reasoning": {
+              "supported": false
+            }
+          }
+        },
         "qwen3-4b": {
-          "name": "Qwen3-4B Unsensored (Default)",
+          "name": "Qwen3-4B Unsensored",
           "limit": {
             "context": 32768,
             "output": 8192
@@ -91,5 +105,5 @@
       }
     }
   },
-  "model": "local-cll/qwen3-4b#medium"
+  "model": "local-cll/qwen2.5-coder-3b"
 }

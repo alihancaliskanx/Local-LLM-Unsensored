@@ -1,0 +1,10 @@
+# Prebuilt unreadable minified web bundles and source maps (pure text single-line files)
+web/llama-ui/
+*.min.js
+*.min.css
+*.map
+
+# Compiler temporary cache directories
+target/
+CMakeFiles/
+__pycache__/

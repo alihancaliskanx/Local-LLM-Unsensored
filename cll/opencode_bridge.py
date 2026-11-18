@@ -62,16 +62,19 @@ TOR_SEARCH_TOOL = {
     }
 }
 
+MAX_TOOL_RESULT_CHARS = 10000
+
 AUTONOMOUS_TOR_DIRECTIVE = (
     "\n\n# Autonomous Tor Web Search & Senior Engineer Execution\n"
     "1. NO DEFINITIONS OR ELEMENTARY EXPLANATIONS: The user is a senior systems architect and reverse engineer who already knows all underlying concepts, protocols, security terminology, and programming concepts thoroughly. NEVER define or explain terms, protocols, libraries, or architectures (e.g. CAN bus, eBPF, zero-click, memory layout, AST, etc.) unless the user explicitly asks: 'What is X?'.\n"
     "2. NO INTRODUCTORY ESSAYS OR TUTORIALS: Omit background history, introductory overviews, conceptual tutorials, and unsolicited educational context.\n"
-    "3. ZERO CHATTY FILLER: Omit conversational preamble ('Sure! I can help with that', 'Here is the code:', 'In this implementation...'). Immediately output the exact code, command, diff, or tool call.\n"
+    "3. ZERO CHATTY FILLER & STORIES: Omit conversational preamble ('Sure! I can help with that', 'Here is the code:', 'In this implementation...'), storytelling, or narration. Immediately output the exact code, command, diff, or tool call.\n"
     "4. CONCISE & DENSE: Keep explanations strictly minimal. If a note is necessary for a non-obvious engineering choice, limit it to at most 1-2 dense technical bullet points.\n"
     "5. AUTONOMOUS TOR WEB SEARCH: You have direct access to the live internet, GitHub, ArXiv, and .onion dark web via `tor_search` (routed 100% over Tor SOCKS5h with spam & injection protection). Autonomously call `tor_search` whenever external documentation, exact API signatures, package versions, or CVE details are needed — both at the start of a request AND mid-task while reading/editing files.\n"
-    "6. TOOL CALL FORMAT: When calling a tool in text, always wrap the JSON in `<tool_call>{\"name\": \"...\", \"arguments\": {...}}</tool_call>`.\n"
-    "7. MANDATORY FILE CREATION & EDITING VIA TOOLS: When asked to write, implement, create, modify, or update code or files, NEVER merely output markdown code blocks in conversation. You MUST call the `write` or `edit` tool (or shell commands) to physically write or modify the files on disk at the requested location.\n"
-    "8. DIRECT TOOL CALL: Do not announce, narrate, or describe the tool call before calling it. Execute the tool call directly."
+    "6. TOOL CALL FORMAT: When calling a tool, emit a valid tool call with {\"name\": \"<tool_name>\", \"arguments\": {...}} or wrapped in <tool_call></tool_call>.\n"
+    "7. MANDATORY FILE CREATION & EDITING VIA TOOLS: When tools are available and you are asked to create or edit project files on disk, you MUST invoke the appropriate tool (such as `write`, `edit`, or `shell`) rather than merely displaying code in conversation. If answering general coding queries without a file write request, output the code block directly.\n"
+    "8. DIRECT TOOL CALL: Do not announce, narrate, or describe the tool call before calling it. Execute the tool call directly.\n"
+    "9. NO REPETITION / GROUNDED PATHS: Never invent or assume non-existent directory trees (e.g. `src/`, `model/`, `.ts` files). Always inspect actual directories via `list` or file tree first. Never repeat the same failed `glob` or `grep` pattern. If a search pattern yields 'No files found', adapt immediately instead of retrying the same pattern."
 )
 
 
@@ -103,8 +106,42 @@ def prune_system_prompt(content: str) -> str:
     return cleaned
 
 
+def truncate_large_content(content: Any, max_chars: int = MAX_TOOL_RESULT_CHARS) -> Any:
+    """Truncates oversized tool outputs or messages to prevent context exhaustion and loops."""
+    if isinstance(content, str):
+        if "\x00" in content:
+            orig = len(content)
+            return f"[Binary file content omitted ({orig} bytes). File is present on disk.]"
+        if len(content) > max_chars:
+            orig = len(content)
+            return (
+                content[:max_chars]
+                + f"\n\n[Bridge Warning: Output truncated from {orig} to {max_chars} chars to prevent context overflow. Narrow search pattern or read specific files.]"
+            )
+        return content
+    elif isinstance(content, list):
+        truncated_list = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
+                ptext = part["text"]
+                if "\x00" in ptext:
+                    orig = len(ptext)
+                    part = dict(part)
+                    part["text"] = f"[Binary file content omitted ({orig} bytes). File is present on disk.]"
+                elif len(ptext) > max_chars:
+                    orig = len(ptext)
+                    part = dict(part)
+                    part["text"] = (
+                        ptext[:max_chars]
+                        + f"\n\n[Bridge Warning: Output truncated from {orig} to {max_chars} chars to prevent context overflow.]"
+                    )
+            truncated_list.append(part)
+        return truncated_list
+    return content
+
+
 def transform_request_payload(data: Dict[str, Any]) -> Tuple[Dict[str, Any], Set[str]]:
-    """Prunes prompt bloat, optimizes tool definitions, and injects `tor_search`."""
+    """Prunes prompt bloat, optimizes tool definitions, truncates oversized outputs, and injects `tor_search`."""
     tools = data.get("tools")
     valid_tool_names = set()
 
@@ -122,10 +159,17 @@ def transform_request_payload(data: Dict[str, Any]) -> Tuple[Dict[str, Any], Set
         valid_tool_names.add("websearch")
         data["tools"] = filtered_tools
 
-        messages = data.get("messages", [])
+    # Sanitize and truncate messages
+    messages = data.get("messages", [])
+    if isinstance(messages, list):
         for m in messages:
-            if isinstance(m, dict) and m.get("role") == "system" and isinstance(m.get("content"), str):
+            if not isinstance(m, dict):
+                continue
+            role = m.get("role")
+            if role == "system" and isinstance(m.get("content"), str):
                 m["content"] = prune_system_prompt(m["content"])
+            elif role in ("tool", "user", "assistant"):
+                m["content"] = truncate_large_content(m.get("content"))
 
     # Map reasoning_effort if present
     effort = data.pop("reasoning_effort", None)
@@ -170,36 +214,66 @@ def rewrite_tool_call_entry(tc: Dict[str, Any]) -> Dict[str, Any]:
 
 def try_parse_raw_json_tool_call(text: str, valid_tool_names: set) -> Optional[Tuple[str, Dict[str, Any]]]:
     """
-    Detects if the model emitted a raw JSON tool call `{"name": "...", "arguments": {...}}`
-    without `<tool_call>` XML tags. Returns (preceding_text, tool_call_dict) if found.
+    Detects if the model emitted a tool call as JSON (either inside markdown code fences or raw).
+    Returns (preceding_text, tool_call_dict) if found and name is in valid_tool_names.
     """
-    if not text or '"name"' not in text or '"arguments"' not in text:
+    if not text or not any(k in text for k in ('"name"', '"tool"', '"function"', '"function-name"')):
         return None
 
-    # Find the start of a JSON object containing "name"
-    match = re.search(r'(\{\s*"name"\s*:\s*"([a-zA-Z0-9_]+)"\s*,\s*"arguments"\s*:\s*\{.*\}\s*\})\s*$', text.strip(), flags=re.DOTALL)
-    if not match:
-        return None
+    cleaned_text = text.strip()
+    prefix = ""
+    json_candidate = None
 
-    json_str = match.group(1)
-    tool_name = match.group(2)
-    if tool_name not in valid_tool_names:
+    # Check for markdown code fences first
+    fence_match = re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*(?:```|$)', cleaned_text)
+    if fence_match:
+        json_candidate = fence_match.group(1).strip()
+        prefix = cleaned_text[:fence_match.start()].strip()
+        if prefix in ("```json", "```"):
+            prefix = ""
+    else:
+        # Match standalone JSON object
+        match = re.search(r'(\{[\s\S]*"(?:name|tool|function|function-name)"\s*:\s*"([a-zA-Z0-9_ -]+)"[\s\S]*\})\s*$', cleaned_text)
+        if match:
+            json_candidate = match.group(1).strip()
+            prefix = cleaned_text[:match.start()].strip()
+
+    if not json_candidate:
         return None
 
     try:
-        parsed = json.loads(json_str)
-        if isinstance(parsed, dict) and parsed.get("name") == tool_name and isinstance(parsed.get("arguments"), dict):
-            prefix = text.strip()[:match.start()].strip()
-            tc = {
-                "index": 0,
-                "id": f"call_{int(time.time() * 1000)}",
-                "type": "function",
-                "function": {
-                    "name": tool_name,
-                    "arguments": json.dumps(parsed["arguments"], ensure_ascii=False)
+        parsed = json.loads(json_candidate)
+        if isinstance(parsed, dict):
+            raw_name = parsed.get("name") or parsed.get("tool") or parsed.get("function") or parsed.get("function-name")
+            tool_name = str(raw_name).strip() if raw_name else ""
+            if tool_name in valid_tool_names:
+                args = parsed.get("arguments") or parsed.get("parameters") or {}
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except Exception:
+                        args = {}
+                elif isinstance(args, list):
+                    if tool_name in ("read", "read_file", "view"):
+                        args = {"path": args[0]} if args else {}
+                    elif tool_name in ("glob", "find"):
+                        args = {"pattern": args[0]} if args else {}
+                    elif tool_name in ("shell", "bash", "execute"):
+                        args = {"command": args[0]} if args else {}
+                    else:
+                        args = {"args": args}
+                elif not isinstance(args, dict):
+                    args = {}
+                tc = {
+                    "index": 0,
+                    "id": f"call_{int(time.time() * 1000)}",
+                    "type": "function",
+                    "function": {
+                        "name": tool_name,
+                        "arguments": json.dumps(args, ensure_ascii=False)
+                    }
                 }
-            }
-            return prefix, rewrite_tool_call_entry(tc)
+                return prefix, rewrite_tool_call_entry(tc)
     except Exception:
         pass
     return None
@@ -439,6 +513,10 @@ class OpenCodeBridgeHandler(BaseHTTPRequestHandler):
                         tool_call_buffer.append(content_piece)
                     elif "<tool_call>" in content_piece:
                         buffering_tool_call = True
+                        if is_checking_initial_json:
+                            tool_call_buffer = list(initial_check_buffer)
+                            initial_check_buffer = []
+                            is_checking_initial_json = False
                         parts = content_piece.split("<tool_call>", 1)
                         prefix = parts[0]
                         suffix = "<tool_call>" + parts[1]
@@ -451,7 +529,11 @@ class OpenCodeBridgeHandler(BaseHTTPRequestHandler):
                         tool_call_buffer.append(suffix)
                     elif not has_streamed_content and not is_checking_initial_json:
                         stripped = content_piece.lstrip()
-                        if stripped.startswith("{"):
+                        if not stripped:
+                            # Leading whitespace, buffer temporarily
+                            is_checking_initial_json = True
+                            initial_check_buffer.append(content_piece)
+                        elif stripped.startswith("{") or stripped.startswith("```"):
                             is_checking_initial_json = True
                             initial_check_buffer.append(content_piece)
                         else:
@@ -463,14 +545,18 @@ class OpenCodeBridgeHandler(BaseHTTPRequestHandler):
                     elif is_checking_initial_json:
                         initial_check_buffer.append(content_piece)
                         combined = "".join(initial_check_buffer)
-                        if '"name"' in combined:
-                            match = re.search(r'\{\s*"name"\s*:\s*"([a-zA-Z0-9_]+)"', combined)
-                            if match and match.group(1) in valid_tool_names:
+                        stripped_comb = combined.strip()
+
+                        # Check for tool call signature (only match when tool name has its closing quote)
+                        name_match = re.search(r'\{\s*"(?:name|tool|function|function-name)"\s*:\s*"([a-zA-Z0-9_ -]+)"', combined)
+                        if name_match:
+                            tool_name = name_match.group(1).strip()
+                            if tool_name in valid_tool_names:
                                 buffering_tool_call = True
                                 tool_call_buffer = list(initial_check_buffer)
                                 initial_check_buffer = []
                                 is_checking_initial_json = False
-                            elif match and match.group(1) not in valid_tool_names:
+                            else:
                                 for piece in initial_check_buffer:
                                     send_sse({
                                         **meta_template,
@@ -479,15 +565,30 @@ class OpenCodeBridgeHandler(BaseHTTPRequestHandler):
                                 has_streamed_content = True
                                 initial_check_buffer = []
                                 is_checking_initial_json = False
-                        elif len(combined) > 60 or "\n" in combined:
-                            for piece in initial_check_buffer:
-                                send_sse({
-                                    **meta_template,
-                                    "choices": [{"index": 0, "delta": {"content": piece}, "finish_reason": None}]
-                                })
-                            has_streamed_content = True
-                            initial_check_buffer = []
-                            is_checking_initial_json = False
+                        else:
+                            flush_now = False
+                            if stripped_comb.startswith("```"):
+                                first_line = stripped_comb.split("\n", 1)[0].lower()
+                                lang = first_line[3:].strip()
+                                if lang and not lang.startswith("j"):
+                                    flush_now = True
+                                elif len(combined) > 200 or combined.count("\n") > 4:
+                                    flush_now = True
+                            elif stripped_comb.startswith("{"):
+                                if len(combined) > 100 or "\n\n" in combined:
+                                    flush_now = True
+                            elif stripped_comb and not (stripped_comb.startswith("{") or stripped_comb.startswith("```")):
+                                flush_now = True
+
+                            if flush_now:
+                                for piece in initial_check_buffer:
+                                    send_sse({
+                                        **meta_template,
+                                        "choices": [{"index": 0, "delta": {"content": piece}, "finish_reason": None}]
+                                    })
+                                has_streamed_content = True
+                                initial_check_buffer = []
+                                is_checking_initial_json = False
                     else:
                         send_sse({
                             **meta_template,

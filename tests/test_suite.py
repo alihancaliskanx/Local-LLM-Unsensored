@@ -521,6 +521,8 @@ class TestOpenCodeBridgeAndSearchSanitization(unittest.TestCase):
         from cll import opencode_bridge
         self.assertIn("MANDATORY FILE CREATION & EDITING VIA TOOLS", opencode_bridge.AUTONOMOUS_TOR_DIRECTIVE)
         self.assertIn("DIRECT TOOL CALL", opencode_bridge.AUTONOMOUS_TOR_DIRECTIVE)
+        self.assertIn("ZERO CHATTY FILLER & STORIES", opencode_bridge.AUTONOMOUS_TOR_DIRECTIVE)
+        self.assertIn("NO REPETITION / GROUNDED PATHS", opencode_bridge.AUTONOMOUS_TOR_DIRECTIVE)
 
         raw = '{"name": "write", "arguments": {"path": "src/driver.c", "content": "int main() { return 0; }"}}'
         parsed = opencode_bridge.try_parse_raw_json_tool_call(raw, {"write", "edit", "read", "shell"})
@@ -530,6 +532,46 @@ class TestOpenCodeBridgeAndSearchSanitization(unittest.TestCase):
         self.assertEqual(tc["function"]["name"], "write")
         args_obj = json.loads(tc["function"]["arguments"])
         self.assertEqual(args_obj["path"], "src/driver.c")
+
+        # Test markdown code fences (with and without prefix)
+        fenced = '```json\n{"name": "read", "arguments": {"path": "cll/main.py"}}\n```'
+        parsed_fenced = opencode_bridge.try_parse_raw_json_tool_call(fenced, {"read"})
+        self.assertIsNotNone(parsed_fenced)
+        self.assertEqual(parsed_fenced[0], "")
+        self.assertEqual(parsed_fenced[1]["function"]["name"], "read")
+
+        fenced_with_prefix = 'Scanning files...\n```json\n{"name": "read", "arguments": {"path": "cll/main.py"}}'
+        parsed_prefix = opencode_bridge.try_parse_raw_json_tool_call(fenced_with_prefix, {"read"})
+        self.assertIsNotNone(parsed_prefix)
+        self.assertEqual(parsed_prefix[0], "Scanning files...")
+        self.assertEqual(parsed_prefix[1]["function"]["name"], "read")
+
+    def test_tool_result_truncation(self):
+        from cll import opencode_bridge
+        huge_tool_output = "x" * 50000
+        payload = {
+            "model": "qwen3-4b",
+            "messages": [
+                {"role": "user", "content": "check files"},
+                {"role": "tool", "content": huge_tool_output}
+            ]
+        }
+        transformed, _ = opencode_bridge.transform_request_payload(payload)
+        tool_content = transformed["messages"][1]["content"]
+        self.assertLess(len(tool_content), 12000)
+        self.assertIn("Bridge Warning: Output truncated from 50000", tool_content)
+
+        # Test binary content suppression (e.g. .dll, .bin, .so inspection)
+        binary_payload = {
+            "model": "qwen3-4b",
+            "messages": [
+                {"role": "tool", "content": "MZ\x00\x00\x90\x00\x03\x00\x00\x00This is a binary DLL file"}
+            ]
+        }
+        b_transformed, _ = opencode_bridge.transform_request_payload(binary_payload)
+        b_content = b_transformed["messages"][0]["content"]
+        self.assertIn("Binary file content omitted", b_content)
+        self.assertIn("File is present on disk", b_content)
 
     def test_cll_reaper_binary_and_help(self):
         import subprocess, os
