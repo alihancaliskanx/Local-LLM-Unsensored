@@ -33,9 +33,9 @@ qwsearch() {
   PYTHONPATH="${QWEN_DIR}" python3 -m cll.search "$@"
 }
 
-_cll_usage() {
+_cllweb_usage() {
   cat << 'EOF'
-Usage: cll [--no-browser] [--port 41625] [stop]
+Usage: cllweb [--no-browser] [--port 41625] [stop]
 
 Chat Local LLM (CLL) — Authentic llama-ui with LLM Power Bar,
 Token Limit Select (up to 48K, 32K default), Zero-Log Privacy, and Tor Web / .onion Search.
@@ -48,7 +48,7 @@ Options:
 EOF
 }
 
-cll() {
+cllweb() {
   local script_path="${QWEN_DIR}/cll/server.py"
   local port="41625"
   local open_browser=1
@@ -69,7 +69,7 @@ cll() {
   fi
 
   if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-    _cll_usage
+    _cllweb_usage
     return 0
   fi
 
@@ -84,7 +84,7 @@ cll() {
   if ss -ltn | grep -q ":${port} "; then
     local url="http://127.0.0.1:${port}"
     echo "CLL is already running at ${url}"
-    echo "Tip: Run 'cll stop' to terminate active instances."
+    echo "Tip: Run 'cllweb stop' to terminate active instances."
     if [[ $open_browser -eq 1 ]]; then
       if command -v xdg-open >/dev/null 2>&1; then
         xdg-open "$url" >/dev/null 2>&1 &
@@ -107,10 +107,8 @@ cll() {
   PYTHONPATH="${QWEN_DIR}" python3 -m cll.server --port "$port" "${browser_args[@]}"
 }
 
-alias qw='qwserver'
-alias qwc='qwcli'
-alias qws='qwcli -s -p'
-alias qwsr='qwsearch'
-alias qwfind='qwsearch'
-alias qwweb='cll'
-alias qww='cll'
+# CLL Fast Aliases
+alias clls='cll chat -s -p'
+alias cllr='cll search'
+alias cllfind='cll search'
+alias cllw='cll web'

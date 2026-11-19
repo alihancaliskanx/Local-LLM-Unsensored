@@ -168,7 +168,7 @@ qwdoctor() {
   PYTHONPATH="${QWEN_DIR}" python3 -m cll.doctor "$@"
 }
 
-alias qwcheck='qwdoctor'
+alias cllcheck='cll doctor'
 
 _qwhost_usage() {
   cat << 'EOF'
@@ -190,14 +190,6 @@ qwhost() {
   PYTHONPATH="${QWEN_DIR}" python3 -m cll.host "$@"
 }
 
-alias qwh='qwhost'
-alias qwonion='qwhost'
-
-# Turkish Command Aliases
-alias qwdosya='qwfile'
-alias qwara='qwsearch'
-alias qwgüvenlik='qwsec'
-alias qwboru='qwpipe'
-alias qwsunucu='qwserver'
-alias qwdoktor='qwdoctor'
-alias qwservis='qwhost'
+# CLL Command Aliases
+alias cllh='cll host'
+alias cllonion='cll host'

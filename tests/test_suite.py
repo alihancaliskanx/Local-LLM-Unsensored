@@ -560,6 +560,18 @@ class TestOpenCodeBridgeAndSearchSanitization(unittest.TestCase):
         tool_content = transformed["messages"][1]["content"]
         self.assertLess(len(tool_content), 12000)
         self.assertIn("Bridge Warning: Output truncated from 50000", tool_content)
+        self.assertIn("read specific line/byte ranges", tool_content)
+
+        # Test clean line boundary truncation
+        multiline_output = "first_line\n" + ("x" * 15000) + "\nlast_line\n"
+        m_payload = {
+            "model": "qwen3-4b",
+            "messages": [{"role": "tool", "content": multiline_output}]
+        }
+        m_transformed, _ = opencode_bridge.transform_request_payload(m_payload)
+        m_content = m_transformed["messages"][0]["content"]
+        self.assertIn("Bridge Warning: Output truncated from", m_content)
+        self.assertIn("read specific line/byte ranges", m_content)
 
         # Test binary content suppression (e.g. .dll, .bin, .so inspection)
         binary_payload = {

@@ -62,7 +62,18 @@ TOR_SEARCH_TOOL = {
     }
 }
 
-MAX_TOOL_RESULT_CHARS = 10000
+DEFAULT_MAX_TOOL_RESULT_CHARS = 10000
+
+
+def get_max_tool_chars() -> int:
+    """Returns the configured tool output truncation limit from environment or default."""
+    try:
+        return int(os.environ.get("CLL_BRIDGE_MAX_OUTPUT", DEFAULT_MAX_TOOL_RESULT_CHARS))
+    except (ValueError, TypeError):
+        return DEFAULT_MAX_TOOL_RESULT_CHARS
+
+
+MAX_TOOL_RESULT_CHARS = get_max_tool_chars()
 
 AUTONOMOUS_TOR_DIRECTIVE = (
     "\n\n# Autonomous Tor Web Search & Senior Engineer Execution\n"
@@ -106,35 +117,40 @@ def prune_system_prompt(content: str) -> str:
     return cleaned
 
 
-def truncate_large_content(content: Any, max_chars: int = MAX_TOOL_RESULT_CHARS) -> Any:
-    """Truncates oversized tool outputs or messages to prevent context exhaustion and loops."""
+def _truncate_text(text: str, limit: int) -> str:
+    """Helper to truncate text at a newline boundary with actionable guidance."""
+    if "\x00" in text:
+        orig = len(text)
+        return f"[Binary file content omitted ({orig} bytes). File is present on disk.]"
+    orig = len(text)
+    if orig <= limit:
+        return text
+
+    lookback = min(1000, limit // 5)
+    last_nl = text.rfind("\n", max(0, limit - lookback), limit)
+    cut_idx = (last_nl + 1) if last_nl != -1 else limit
+
+    warning = (
+        f"\n\n[Bridge Warning: Output truncated from {orig} to {cut_idx} chars to prevent context overflow. "
+        f"To inspect the remainder without context overflow, read specific line/byte ranges or narrow the query.]"
+    )
+    return text[:cut_idx] + warning
+
+
+def truncate_large_content(content: Any, max_chars: Optional[int] = None) -> Any:
+    """Truncates oversized tool outputs or messages to prevent context exhaustion and loops.
+
+    Preserves line boundaries when possible and advises the model on offset/range reading.
+    """
+    limit = max_chars if max_chars is not None else get_max_tool_chars()
     if isinstance(content, str):
-        if "\x00" in content:
-            orig = len(content)
-            return f"[Binary file content omitted ({orig} bytes). File is present on disk.]"
-        if len(content) > max_chars:
-            orig = len(content)
-            return (
-                content[:max_chars]
-                + f"\n\n[Bridge Warning: Output truncated from {orig} to {max_chars} chars to prevent context overflow. Narrow search pattern or read specific files.]"
-            )
-        return content
+        return _truncate_text(content, limit)
     elif isinstance(content, list):
         truncated_list = []
         for part in content:
             if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
-                ptext = part["text"]
-                if "\x00" in ptext:
-                    orig = len(ptext)
-                    part = dict(part)
-                    part["text"] = f"[Binary file content omitted ({orig} bytes). File is present on disk.]"
-                elif len(ptext) > max_chars:
-                    orig = len(ptext)
-                    part = dict(part)
-                    part["text"] = (
-                        ptext[:max_chars]
-                        + f"\n\n[Bridge Warning: Output truncated from {orig} to {max_chars} chars to prevent context overflow.]"
-                    )
+                part = dict(part)
+                part["text"] = _truncate_text(part["text"], limit)
             truncated_list.append(part)
         return truncated_list
     return content

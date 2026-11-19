@@ -766,8 +766,8 @@ async def chat_completions_handler(request: Request):
     if not is_llama_running():
         async def offline_stream():
             msg = (
-                "⚠️ **Local LLM Çevrimdışı (Offline).**\n\n"
-                "Model henüz başlatılmamış. Modeli aktif hale getirmek için lütfen üst paneldeki **'LLM Offline (Start)'** düğmesine tıklayın."
+                "⚠️ **Local LLM is Offline.**\n\n"
+                "The model is not running. To start the model, click **'LLM Offline (Start)'** in the top control bar."
             )
             chunk = {"choices": [{"index": 0, "delta": {"content": msg}, "finish_reason": "stop"}]}
             c1 = f"data: {json.dumps(chunk)}\n\n"
@@ -982,9 +982,9 @@ async def chat_completions_handler(request: Request):
                 sys_instruction = f"{prompts.STANDARD_ASSISTANT_PROMPT}\n\n{sandboxed_data}"
 
             lang_directive = (
-                "\n\n🚨 DİL ZORUNLULUĞU (MANDATORY LANGUAGE DIRECTIVE):\n"
-                "Kullanıcı Türkçe talimat vermiştir. Yanıtınızın TAMAMINI (tüm başlıklar, açıklamalar, analizler ve sonuçlar) EKSİKSİZ TÜRKÇE olarak yazın.\n"
-                "Alıntılanan kaynaklar İngilizce olsa dahi bilgileri Türkçe açıklayın. Kullanıcı açıkça talep etmedikçe ASLA İngilizce yanıt vermeyin."
+                "\n\n🚨 MANDATORY LANGUAGE DIRECTIVE:\n"
+                "The user gave instructions in Turkish. Write your entire response in Turkish (all headings, explanations, analyses, and conclusions).\n"
+                "Even if sources are in English, present information in Turkish. Do not output in English unless explicitly requested."
                 if query_lang == "tr" else ""
             )
             sys_instruction += lang_directive
@@ -1004,9 +1004,9 @@ async def chat_completions_handler(request: Request):
                 f"NEVER claim to lack internet tools, never apologize, and never output tool refusal statements."
             )
             lang_directive = (
-                "\n\n🚨 DİL ZORUNLULUĞU (MANDATORY LANGUAGE DIRECTIVE):\n"
-                "Kullanıcı Türkçe talimat vermiştir. Yanıtınızın TAMAMINI (tüm başlıklar, açıklamalar, analizler ve sonuçlar) EKSİKSİZ TÜRKÇE olarak yazın.\n"
-                "Kullanıcı açıkça talep etmedikçe ASLA İngilizce yanıt vermeyin."
+                "\n\n🚨 MANDATORY LANGUAGE DIRECTIVE:\n"
+                "The user gave instructions in Turkish. Write your entire response in Turkish (all headings, explanations, and conclusions).\n"
+                "Do not output in English unless explicitly requested."
                 if query_lang == "tr" else ""
             )
             fallback_instruction += lang_directive
@@ -1016,8 +1016,8 @@ async def chat_completions_handler(request: Request):
         # Guarantee default technical system prompt to eliminate tool-refusal hallucinations
         has_system = any(m.get("role") == "system" for m in messages)
         lang_prompt = (
-            "\n\n🚨 DİL ZORUNLULUĞU (MANDATORY LANGUAGE DIRECTIVE):\n"
-            "Kullanıcı Türkçe talimat vermiştir. Yanıtınızı EKSİKSİZ TÜRKÇE olarak verin. Asla İngilizce yanıt vermeyin."
+            "\n\n🚨 MANDATORY LANGUAGE DIRECTIVE:\n"
+            "The user gave instructions in Turkish. Output your entire response in Turkish. Do not output in English."
             if query_lang == "tr" else ""
         )
         if not has_system:

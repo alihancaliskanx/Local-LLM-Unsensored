@@ -19,6 +19,11 @@ Core Commands:
   search       Privacy-preserving raw Tor web & dark web search (torsearch)
   model        Manage multi-model profiles (list, use, pull, current)
   doctor       Run system diagnostics (health, GPU memory, ports)
+  web          Launch the legacy CLL browser interface (llama-ui on port 41625)
+  file         Analyze codebase files and dependencies (qwfile)
+  sec          Security audit and CVE advisory lookup (qwsec)
+  pipe         Process piped stdin through the model (qwpipe)
+  host         Manage Tor Onion services and persistent endpoints (qwhost)
   help         Show this help message
 
 Global Flags:
@@ -147,6 +152,21 @@ case "${command}" in
         ;;
     doctor)
         PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}" exec python3 -m cll.doctor "$@"
+        ;;
+    web)
+        PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}" exec python3 -m cll.server "$@"
+        ;;
+    file)
+        PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}" exec python3 -m cll.inference file "$@"
+        ;;
+    sec)
+        PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}" exec python3 -m cll.inference sec "$@"
+        ;;
+    pipe)
+        PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}" exec python3 -m cll.inference pipe "$@"
+        ;;
+    host)
+        PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}" exec python3 -m cll.host "$@"
         ;;
     help | -h | --help)
         usage
